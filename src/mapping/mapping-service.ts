@@ -115,17 +115,7 @@ export function mapItemsToGantt(items: Array<Record<string, unknown>>, config: G
     };
     tasks.push(task);
 
-    // Dependencies -> links
-    const depsRaw = getVal(it, fm.dependency);
-    let depIds: string[] = [];
-    if (typeof depsRaw === 'string') {
-      depIds = (depsRaw as string).split(',').map(s => s.trim()).filter(Boolean);
-    } else if (Array.isArray(depsRaw)) {
-      depIds = (depsRaw as unknown[]).map(String).map(s => s.trim()).filter(Boolean);
-    }
-    for (const dep of depIds) {
-      links.push({ id: `${dep}->${id}`, source: dep, target: id, type: '0' });
-    }
+    // Dependencies intentionally omitted for now per requirements; links remain empty
   }
 
   return { tasks, links, warnings };

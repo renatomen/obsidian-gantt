@@ -5,7 +5,6 @@
 import type { Plugin } from 'obsidian';
 
 // Bundle DHTMLX JS into our plugin to avoid CSP on external <script> tags.
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore - UMD script defines window.gantt
 import '../../vendor/dhtmlx/dhtmlxgantt.min.js';
 

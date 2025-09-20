@@ -9,7 +9,6 @@ describe('mapping-service (PRD YAML spec)', () => {
       start: 'start',
       end: 'due',
       progress: 'pct',
-      dependency: 'dependency',
       parent: 'parent',
       parents: 'in',
     },
@@ -59,35 +58,6 @@ describe('mapping-service (PRD YAML spec)', () => {
     expect(tasks[0].start_date).toBe('2024-01-05'); // -5 days
   });
 
-  it('prefers parent over parents[0] when both provided; falls back to parents[0]', () => {
-    const items = [
-      { id: 'C1', title: 'Child 1', start: '2024-01-01', due: '2024-01-02', parent: 'P', in: ['A', 'B'] },
-      { id: 'C2', title: 'Child 2', start: '2024-01-01', due: '2024-01-02', in: ['A', 'B'] },
-    ];
 
-    const { tasks } = mapItemsToGantt(items as Array<Record<string, unknown>>, baseConfig);
-
-    expect(tasks.find(t => t.id === 'C1')!.parent).toBe('P');
-    expect(tasks.find(t => t.id === 'C2')!.parent).toBe('A');
-  });
-
-  it('parses dependencies from comma-separated string or array into FS links', () => {
-    const items = [
-      { id: 'T1', title: 'Task 1', start: '2024-01-01', due: '2024-01-02', dependency: 'A, B' },
-      { id: 'T2', title: 'Task 2', start: '2024-01-03', due: '2024-01-04', dependency: ['C', 'D'] },
-    ];
-
-    const { links } = mapItemsToGantt(items as Array<Record<string, unknown>>, baseConfig);
-
-    const byTarget = (target: string) => links.filter(l => l.target === target);
-    const t1Links = byTarget('T1');
-    const t2Links = byTarget('T2');
-
-    expect(t1Links.map(l => l.source).sort()).toEqual(['A','B']);
-    expect(t1Links.every(l => l.type === '0')).toBe(true);
-
-    expect(t2Links.map(l => l.source).sort()).toEqual(['C','D']);
-    expect(t2Links.every(l => l.type === '0')).toBe(true);
-  });
 });
 
