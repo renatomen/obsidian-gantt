@@ -5,7 +5,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
 export default [
   // Files/folders to ignore
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.wdio-*']
+    ignores: ['dist/**', 'vendor/**', 'node_modules/**', 'coverage/**', '.wdio-*']
   },
   // Base JS recommended rules
   js.configs.recommended,
@@ -46,7 +46,9 @@ export default [
         process: 'readonly',
         __dirname: 'readonly',
         module: 'readonly',
-        require: 'readonly'
+        require: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly'
       }
     }
   },

@@ -1,0 +1,12 @@
+DHTMLX Gantt (Standard Edition)
+
+Copyright (c) XB Software Ltd.
+
+License: GNU General Public License, version 2 (GPL-2.0)
+- Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+- Product page: https://dhtmlx.com/docs/products/dhtmlxGantt/
+- NPM package: https://www.npmjs.com/package/dhtmlx-gantt
+
+This project ships DHTMLX Gantt Standard Edition JS/CSS for offline usage under vendor/dhtmlx/.
+The main plugin is GPL-2.0-only, which is compatible with DHTMLX Standard Edition.
+
