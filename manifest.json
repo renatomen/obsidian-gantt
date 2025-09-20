@@ -1,0 +1,11 @@
+{
+  "id": "obsidian-gantt",
+  "name": "Obsidian Gantt",
+  "version": "0.0.1",
+  "minAppVersion": "1.5.0",
+  "description": "Generate DHTMLX Gantt charts from Obsidian note properties and YAML frontmatter metadata.",
+  "author": "Renato / Open Source Community",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
+
