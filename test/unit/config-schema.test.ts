@@ -19,7 +19,7 @@ describe('validateGanttConfig', () => {
   });
 
   it('should throw with a helpful message when required fields are missing', () => {
-    expect(() => validateGanttConfig({} as any)).toThrow(
+    expect(() => validateGanttConfig({})).toThrow(
       /tasksField,startField,endField are required/i
     );
   });
@@ -29,7 +29,7 @@ describe('validateGanttConfig', () => {
       tasksField: '',
       startField: 'start',
       endField: 'end'
-    } as any)).toThrow(/tasksField must be a non-empty string/i);
+    })).toThrow(/tasksField must be a non-empty string/i);
   });
 });
 
