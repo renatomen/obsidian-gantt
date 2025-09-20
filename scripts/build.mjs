@@ -30,4 +30,13 @@ for (const file of ['manifest.json', 'styles.css']) {
   try { await fs.copyFile(file, `dist/${file}`); }
   catch { console.warn(`[build] Optional asset missing: ${file}`); }
 }
+// Copy vendor directory recursively if present (offline assets)
+try {
+  await fs.mkdir('dist/vendor', { recursive: true });
+  await fs.cp('vendor', 'dist/vendor', { recursive: true });
+  console.log('[build] Copied vendor/ -> dist/vendor');
+} catch {
+  console.warn('[build] No vendor/ directory to copy');
+}
+
 

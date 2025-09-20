@@ -5,7 +5,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
 export default [
   // Files/folders to ignore
   {
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '.wdio-*']
+    ignores: ['dist/**', 'vendor/**', 'node_modules/**', 'coverage/**', '.wdio-*']
   },
   // Base JS recommended rules
   js.configs.recommended,
@@ -19,7 +19,12 @@ export default [
         sourceType: 'module'
       },
       globals: {
-        console: 'readonly'
+        console: 'readonly',
+        window: 'readonly',
+        document: 'readonly',
+        HTMLElement: 'readonly',
+        CSSStyleSheet: 'readonly',
+        setTimeout: 'readonly'
       }
     },
     plugins: {
@@ -27,6 +32,9 @@ export default [
     },
     rules: {
       // keep initial rule set minimal; we can tighten later per standards
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'error'
     }
   },
@@ -38,7 +46,9 @@ export default [
         process: 'readonly',
         __dirname: 'readonly',
         module: 'readonly',
-        require: 'readonly'
+        require: 'readonly',
+        Buffer: 'readonly',
+        URL: 'readonly'
       }
     }
   },
