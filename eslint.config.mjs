@@ -19,7 +19,12 @@ export default [
         sourceType: 'module'
       },
       globals: {
-        console: 'readonly'
+        console: 'readonly',
+        window: 'readonly',
+        document: 'readonly',
+        HTMLElement: 'readonly',
+        CSSStyleSheet: 'readonly',
+        setTimeout: 'readonly'
       }
     },
     plugins: {
@@ -27,6 +32,9 @@ export default [
     },
     rules: {
       // keep initial rule set minimal; we can tighten later per standards
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'error'
     }
   },

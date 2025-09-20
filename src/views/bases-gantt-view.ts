@@ -2,8 +2,10 @@ import type { Plugin } from 'obsidian';
 import { loadLocalDhtmlx, renderDummyGantt } from '../gantt/dhtmlx-adapter';
 
 /** Factory to create the ObsidianGantt Bases custom view. */
+type BasesContainer = { viewContainerEl?: HTMLElement; containerEl?: HTMLElement };
+
 export function buildGanttViewFactory(plugin: Plugin) {
-  return function createView(basesContainer: any) {
+  return function createView(basesContainer: BasesContainer) {
     let rootEl: HTMLElement | null = null;
 
     return {

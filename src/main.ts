@@ -2,7 +2,6 @@ import { Plugin } from 'obsidian';
 import { buildGanttViewFactory } from './views/bases-gantt-view';
 
 // Obsidian global API version guard (available in app)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 declare const requireApiVersion: ((v: string) => boolean) | undefined;
 
 export default class ObsidianGanttPlugin extends Plugin {
@@ -20,15 +19,23 @@ export default class ObsidianGanttPlugin extends Plugin {
     // Refresh existing Bases leaves so new registrations are available immediately
     const leaves = this.app.workspace.getLeavesOfType?.('bases') ?? [];
     for (const leaf of leaves) {
-      try { (leaf.view as any)?.refresh?.(); } catch (e) { /* noop */ }
+      const v = (leaf as unknown as { view?: unknown }).view;
+      const maybeRefresh = (v as { refresh?: unknown })?.refresh;
+      if (typeof maybeRefresh === 'function') {
+        try { (maybeRefresh as () => void)(); } catch { /* noop */ }
+      }
     }
   }
 
   private registerBasesViewWithRetry(attempt = 0) {
     try {
       if (!requireApiVersion || !requireApiVersion('1.9.12')) return;
-      const bases = (this.app as any).internalPlugins?.getEnabledPluginById?.('bases');
-      const regs = bases?.registrations;
+      type InternalPluginsLike = { getEnabledPluginById?: (id: string) => unknown };
+      const internal = (this.app as unknown as { internalPlugins?: InternalPluginsLike }).internalPlugins;
+      const bases = internal?.getEnabledPluginById?.('bases');
+      type BasesRegistration = { name: string; icon: string; factory: ReturnType<typeof buildGanttViewFactory> };
+      type BasesPluginLike = { registrations?: Record<string, BasesRegistration> };
+      const regs = (bases as BasesPluginLike | undefined)?.registrations;
       if (regs && typeof regs === 'object') {
         regs['ObsidianGantt'] = {
           name: 'Gantt (obsidian-gantt)',
@@ -39,7 +46,7 @@ export default class ObsidianGanttPlugin extends Plugin {
         console.log('obsidian-gantt: Bases view "ObsidianGantt" registered');
         return;
       }
-    } catch (e) {
+    } catch {
       // continue to retry
     }
     if (attempt < 5) {

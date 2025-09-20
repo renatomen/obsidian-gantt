@@ -5,23 +5,31 @@
 import type { Plugin } from 'obsidian';
 
 // DHTMLX gantt global (injected by local JS asset)
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-declare const gantt: any;
+declare const gantt:
+  | {
+      init?: (el: HTMLElement) => void;
+      parse?: (payload: { data: Array<Record<string, unknown>>; links?: Array<Record<string, unknown>> }) => void;
+      config?: Record<string, unknown>;
+    }
+  | undefined;
 
 /** Compute a resource URL for a plugin-local asset (desktop and mobile). */
 export function getPluginAssetUrl(plugin: Plugin, relativePath: string): string {
-  // @ts-expect-error FileSystemAdapter typing
-  const adapter = plugin.app.vault.adapter;
-  if (!adapter || typeof adapter.getBasePath !== 'function' || typeof adapter.getResourcePath !== 'function') {
+  const adapterUnknown: unknown = plugin.app.vault.adapter;
+  const hasBase = (a: unknown): a is { getBasePath: () => string } =>
+    typeof (a as { getBasePath?: unknown })?.getBasePath === 'function';
+  const hasRes = (a: unknown): a is { getResourcePath: (p: string) => string } =>
+    typeof (a as { getResourcePath?: unknown })?.getResourcePath === 'function';
+  if (!hasBase(adapterUnknown) || !hasRes(adapterUnknown)) {
     throw new Error('Unsupported adapter for asset loading');
   }
-  const base: string = adapter.getBasePath();
+  const base: string = adapterUnknown.getBasePath();
   // Join using platform-appropriate separator heuristics without importing 'path'.
   const sep = base.includes('\\') ? '\\' : '/';
   const trimmedBase = base.replace(/[\\/]+$/, '');
   const trimmedRel = relativePath.replace(/^[\\/]+/, '').replace(/[\\/]+/g, sep);
   const abs = `${trimmedBase}${sep}.obsidian${sep}plugins${sep}${plugin.manifest.id}${sep}${trimmedRel}`;
-  return adapter.getResourcePath(abs);
+  return adapterUnknown.getResourcePath(abs);
 }
 
 export async function injectCss(href: string): Promise<void> {
@@ -54,14 +62,14 @@ export async function loadLocalDhtmlx(plugin: Plugin): Promise<void> {
   const js = getPluginAssetUrl(plugin, 'vendor/dhtmlx/dhtmlxgantt.js');
   try {
     await injectCss(css);
-  } catch (e) {
+  } catch {
     // Try minified filename as alternative
     const altCss = getPluginAssetUrl(plugin, 'vendor/dhtmlx/dhtmlxgantt.min.css');
     await injectCss(altCss);
   }
   try {
     await injectScript(js);
-  } catch (e) {
+  } catch {
     const altJs = getPluginAssetUrl(plugin, 'vendor/dhtmlx/dhtmlxgantt.min.js');
     await injectScript(altJs);
   }
