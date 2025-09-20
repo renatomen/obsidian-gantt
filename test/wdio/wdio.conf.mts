@@ -1,16 +1,23 @@
 import { type Options } from '@wdio/types';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const pluginRoot = process.env.PLUGIN_DIR || path.resolve(__dirname, '../../');
+const vaultPath = process.env.OBSIDIAN_TEST_VAULT || 'C:/Users/renato/obsidian-test-vaults/obsidian-gantt-test-vault';
 
 export const config: Options.Testrunner = {
   runner: 'local',
   framework: 'mocha',
-  specs: ['./test/specs/**/*.e2e.ts'],
+  specs: ['../specs/**/*.e2e.ts'],
   maxInstances: 1,
   capabilities: [{
     browserName: 'obsidian',
     browserVersion: 'latest',
     'wdio:obsidianOptions': {
-      plugins: ['.'],
-      vault: process.env.OBSIDIAN_TEST_VAULT || 'C:/Users/renato/obsidian-test-vaults/obsidian-gantt-test-vault'
+      plugins: [path.resolve(pluginRoot, 'dist')],
+      vault: vaultPath
     }
   }],
   services: ['obsidian'],
