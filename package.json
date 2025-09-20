@@ -19,6 +19,7 @@
     "e2e": "wdio run ./test/wdio/wdio.conf.mts",
     "build:local": "node scripts/build-local.mjs",
     "e2e:local": "node scripts/e2e-local.mjs",
+    "vendor:fetch": "node scripts/fetch-vendor.mjs",
     "prepare": "husky"
   },
   "devDependencies": {

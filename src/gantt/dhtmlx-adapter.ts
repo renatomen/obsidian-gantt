@@ -4,7 +4,12 @@
  */
 import type { Plugin } from 'obsidian';
 
-// DHTMLX gantt global (injected by local JS asset)
+// Bundle DHTMLX JS into our plugin to avoid CSP on external <script> tags.
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore - UMD script defines window.gantt
+import '../../vendor/dhtmlx/dhtmlxgantt.min.js';
+
+// DHTMLX gantt global (provided by bundled script)
 declare const gantt:
   | {
       init?: (el: HTMLElement) => void;
@@ -13,65 +18,41 @@ declare const gantt:
     }
   | undefined;
 
-/** Compute a resource URL for a plugin-local asset (desktop and mobile). */
-export function getPluginAssetUrl(plugin: Plugin, relativePath: string): string {
-  const adapterUnknown: unknown = plugin.app.vault.adapter;
-  const hasBase = (a: unknown): a is { getBasePath: () => string } =>
-    typeof (a as { getBasePath?: unknown })?.getBasePath === 'function';
-  const hasRes = (a: unknown): a is { getResourcePath: (p: string) => string } =>
-    typeof (a as { getResourcePath?: unknown })?.getResourcePath === 'function';
-  if (!hasBase(adapterUnknown) || !hasRes(adapterUnknown)) {
-    throw new Error('Unsupported adapter for asset loading');
-  }
-  const base: string = adapterUnknown.getBasePath();
-  // Join using platform-appropriate separator heuristics without importing 'path'.
-  const sep = base.includes('\\') ? '\\' : '/';
-  const trimmedBase = base.replace(/[\\/]+$/, '');
-  const trimmedRel = relativePath.replace(/^[\\/]+/, '').replace(/[\\/]+/g, sep);
-  const abs = `${trimmedBase}${sep}.obsidian${sep}plugins${sep}${plugin.manifest.id}${sep}${trimmedRel}`;
-  return adapterUnknown.getResourcePath(abs);
+/** Inject CSS text inline (allowed by style-src 'unsafe-inline'). */
+async function injectInlineCss(cssText: string, id = 'ogantt-dhtmlx-css'): Promise<void> {
+  if (document.getElementById(id)) return;
+  const style = document.createElement('style');
+  style.id = id;
+  style.textContent = cssText;
+  document.head.appendChild(style);
 }
 
-export async function injectCss(href: string): Promise<void> {
-  if ([...document.styleSheets].some((s) => (s as CSSStyleSheet).href === href)) return;
-  await new Promise<void>((resolve, reject) => {
-    const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = href;
-    link.onload = () => resolve();
-    link.onerror = () => reject(new Error(`Failed to load CSS: ${href}`));
-    document.head.appendChild(link);
-  });
-}
-
-export async function injectScript(src: string): Promise<void> {
-  if ([...document.scripts].some((s) => s.src === src)) return;
-  await new Promise<void>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = false;
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
-    document.head.appendChild(script);
-  });
+/** Read a text file from the vault relative path. */
+async function readVaultText(plugin: Plugin, vaultRelativePath: string): Promise<string> {
+  // Use POSIX separators for adapter paths
+  const p = vaultRelativePath.replace(/\\/g, '/');
+  return await plugin.app.vault.adapter.read(p);
 }
 
 /** Load DHTMLX Gantt assets from the plugin's local vendor directory. */
 export async function loadLocalDhtmlx(plugin: Plugin): Promise<void> {
-  const css = getPluginAssetUrl(plugin, 'vendor/dhtmlx/dhtmlxgantt.css');
-  const js = getPluginAssetUrl(plugin, 'vendor/dhtmlx/dhtmlxgantt.js');
+  // Prefer minified CSS; fall back to non-minified if missing
+  const base = `.obsidian/plugins/${plugin.manifest.id}/vendor/dhtmlx/`;
+  let cssText: string | null = null;
   try {
-    await injectCss(css);
+    cssText = await readVaultText(plugin, `${base}dhtmlxgantt.min.css`);
   } catch {
-    // Try minified filename as alternative
-    const altCss = getPluginAssetUrl(plugin, 'vendor/dhtmlx/dhtmlxgantt.min.css');
-    await injectCss(altCss);
+    try {
+      cssText = await readVaultText(plugin, `${base}dhtmlxgantt.css`);
+    } catch {
+      // leave null; will be handled below
+    }
   }
-  try {
-    await injectScript(js);
-  } catch {
-    const altJs = getPluginAssetUrl(plugin, 'vendor/dhtmlx/dhtmlxgantt.min.js');
-    await injectScript(altJs);
+  if (cssText) {
+    await injectInlineCss(cssText);
+  } else {
+    // Not fatal; JS is bundled, chart can still render with default styles (ugly)
+    console.warn('obsidian-gantt: DHTMLX CSS not found under vendor/dhtmlx');
   }
 }
 
@@ -80,6 +61,8 @@ export function renderDummyGantt(containerEl: HTMLElement): void {
   // Ensure container for gantt
   const ganttEl = containerEl.querySelector('.gantt_container') as HTMLElement | null
     ?? containerEl.appendChild(Object.assign(document.createElement('div'), { className: 'gantt_container' }));
+  // Ensure the inner container fills the root container height
+  (ganttEl as HTMLElement).style.height = '100%';
   // @ts-ignore depends on injected global
   if (typeof gantt?.init === 'function') {
     // Minimal config to avoid heavy DOM
