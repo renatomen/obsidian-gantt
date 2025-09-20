@@ -19,6 +19,8 @@
     "e2e": "wdio run ./test/wdio/wdio.conf.mts"
   },
   "devDependencies": {
+    "@swc/core": "^1.13.5",
+    "@swc/jest": "^0.2.39",
     "@types/jest": "^30.0.0",
     "@typescript-eslint/eslint-plugin": "^8.44.0",
     "@typescript-eslint/parser": "^8.44.0",
