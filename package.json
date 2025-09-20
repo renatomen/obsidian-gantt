@@ -4,7 +4,7 @@
   "private": true,
   "description": "Generate DHTMLX Gantt charts from Obsidian note properties and YAML frontmatter metadata.",
   "author": "Renato / Open Source Community",
-  "license": "MIT",
+  "license": "GPL-2.0-only",
   "type": "module",
   "engines": {
     "node": ">=18"
