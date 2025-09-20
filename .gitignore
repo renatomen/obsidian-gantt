@@ -1,0 +1,27 @@
+# Node / package managers
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs / coverage
+/dist/
+/coverage/
+.eslintcache
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test & E2E artifacts
+.test-results/
+.wdio-*
+
+# Env files (if used)
+.env
+.env.*
+
+project/ 
+.augment/ 
