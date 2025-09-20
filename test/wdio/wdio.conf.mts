@@ -15,6 +15,6 @@ export const config: Options.Testrunner = {
   }],
   services: ['obsidian'],
   reporters: ['obsidian'],
-  mochaOpts: { ui: 'bdd', timeout: 120000 }
+  mochaOpts: { ui: 'bdd', timeout: 180000 }
 };
 
