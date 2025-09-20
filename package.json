@@ -13,7 +13,7 @@
     "build": "node scripts/build.mjs",
     "postbuild": "node scripts/install-to-vault.cjs",
     "dev": "node scripts/build.mjs --watch",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "lint": "eslint . --ext .ts",
     "format": "prettier --write .",
     "e2e": "wdio run ./test/wdio/wdio.conf.mts"
