@@ -28,6 +28,6 @@ if (isWatch) {
 // Copy static assets (do not fail build if missing)
 for (const file of ['manifest.json', 'styles.css']) {
   try { await fs.copyFile(file, `dist/${file}`); }
-  catch (e) { console.warn(`[build] Optional asset missing: ${file}`); }
+  catch { console.warn(`[build] Optional asset missing: ${file}`); }
 }
 
