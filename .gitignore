@@ -1,3 +1,4 @@
+
 # Node / package managers
 node_modules/
 npm-debug.log*
@@ -24,4 +25,9 @@ Thumbs.db
 .env.*
 
 project/ 
-.augment/ 
+.augment/
+
+# Obsidian local config / E2E cache
+.obsidian/
+test/wdio/.obsidian-cache/
+
