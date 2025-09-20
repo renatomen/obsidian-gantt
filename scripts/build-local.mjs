@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import path from 'node:path';
 
 // Repo-scoped local test vault path (user-provided)
 const LOCAL_VAULT = 'C:/Users/renato/obsidian-test-vaults/obsidian-gantt-test-vault';
