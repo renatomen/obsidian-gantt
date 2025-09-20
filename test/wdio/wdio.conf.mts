@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const pluginRoot = process.env.PLUGIN_DIR || path.resolve(__dirname, '../../');
-const vaultPath = process.env.OBSIDIAN_TEST_VAULT || 'C:/Users/renato/obsidian-test-vaults/obsidian-gantt-test-vault';
+const defaultVault = path.resolve(__dirname, '../../.wdio-vault');
+const vaultPath = process.env.OBSIDIAN_TEST_VAULT || defaultVault;
 
 export const config: Options.Testrunner = {
   runner: 'local',
