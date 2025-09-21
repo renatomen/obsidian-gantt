@@ -91,9 +91,16 @@ export function mapItemsToGantt(items: Array<Record<string, unknown>>, config: G
   const resolveParent = (val: unknown): string | undefined => {
     if (val == null) return undefined;
     // Object with a path
-    if (typeof val === 'object') {
-      const anyVal = val as any;
-      const p = anyVal?.path || anyVal?.file?.path || anyVal?.note?.path;
+    if (typeof val === 'object' && val !== null) {
+      const rec = val as Record<string, unknown>;
+      let p: unknown = undefined;
+      if (typeof rec.path === 'string') {
+        p = rec.path;
+      } else if (rec.file && typeof rec.file === 'object' && typeof (rec.file as Record<string, unknown>).path === 'string') {
+        p = (rec.file as Record<string, unknown>).path;
+      } else if (rec.note && typeof rec.note === 'object' && typeof (rec.note as Record<string, unknown>).path === 'string') {
+        p = (rec.note as Record<string, unknown>).path;
+      }
       if (typeof p === 'string' && idSet.has(p)) return p;
       return undefined;
     }
@@ -102,7 +109,7 @@ export function mapItemsToGantt(items: Array<Record<string, unknown>>, config: G
       // Wikilink [[target]] or [[target|alias]]
       const m = s.match(/^\[\[([^|\]]+)(?:\|[^\]]+)?\]\]$/);
       if (m) {
-        const key = m[1].trim();
+        const key = (m[1] ?? '').trim();
         if (idSet.has(key)) return key;
         const byName = nameToId.get(key) || nameToId.get(key.replace(/\.md$/i, ''));
         if (byName) return byName;
@@ -200,10 +207,4 @@ export function mapItemsToGantt(items: Array<Record<string, unknown>>, config: G
   return { tasks, links, warnings };
 }
 
-// Tiny random ID fallback to avoid dragging larger deps just for tests
-function cryptoRandomId(): string {
-  const g = globalThis as unknown as { crypto?: { randomUUID?: () => string } };
-  if (typeof g.crypto?.randomUUID === 'function') return g.crypto.randomUUID!();
-  return `id_${Math.random().toString(36).slice(2, 10)}`;
-}
 

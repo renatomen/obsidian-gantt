@@ -37,7 +37,7 @@ describe('GanttService', () => {
   it('sets DHTMLX date parsing format to %Y-%m-%d before parsing', () => {
     const init = jest.fn();
     const parse = jest.fn();
-    const config: Record<string, any> = {};
+    const config: Record<string, unknown> = {};
     const gantt = { init, parse, config };
 
     const svc = new GanttService(gantt);
