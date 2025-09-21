@@ -1,3 +1,5 @@
+import { parseInputToUTCDate, formatDateUTCToYMD, addDaysUTC } from '@utils/date-utils';
+
 export type GanttTask = {
   id: string;
   text: string;
@@ -49,38 +51,110 @@ export function mapItemsToGantt(items: Array<Record<string, unknown>>, config: G
 
   const fm = config.fieldMappings ?? {};
 
-  const getVal = (it: Record<string, unknown>, key?: string): unknown => (key ? (it as Record<string, unknown>)[key] : undefined);
-
-  const dateToIso = (d: Date): string => d.toISOString().slice(0, 10);
-  const parseDate = (s: unknown): Date | undefined => {
-    if (typeof s !== 'string' || !s) return undefined;
-    const d = new Date(s);
-    return isNaN(d.getTime()) ? undefined : d;
+  // Resolve simple keys and dotted paths like "file.path"
+  const getVal = (it: Record<string, unknown>, key?: string): unknown => {
+    if (!key) return undefined;
+    if (key.indexOf('.') === -1) return (it as Record<string, unknown>)[key];
+    let cur: unknown = it;
+    for (const seg of key.split('.')) {
+      if (cur && typeof cur === 'object' && seg in (cur as Record<string, unknown>)) {
+        cur = (cur as Record<string, unknown>)[seg];
+      } else {
+        return undefined;
+      }
+    }
+    return cur;
   };
-  const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86400000);
+
+
+  // Date utilities
+
+
+
+  // Build indexes to resolve parent references reliably
+  const idSet = new Set<string>();
+  const nameToId = new Map<string, string>();
+  for (const it of items ?? []) {
+    const idSrc = getVal(it, fm.id);
+    const sid = typeof idSrc === 'string' ? idSrc.trim() : (idSrc != null ? String(idSrc) : '');
+    if (sid) {
+      idSet.add(sid);
+      const t = getVal(it, fm.text);
+      if (typeof t === 'string' && t.trim()) nameToId.set(t.trim(), sid);
+      const b = getVal(it, 'file.basename');
+      if (typeof b === 'string' && b.trim()) nameToId.set(b.trim(), sid);
+      const n = getVal(it, 'file.name');
+      if (typeof n === 'string' && n.trim()) nameToId.set(n.trim(), sid);
+    }
+  }
+
+  const resolveParent = (val: unknown): string | undefined => {
+    if (val == null) return undefined;
+    // Object with a path
+    if (typeof val === 'object') {
+      const anyVal = val as any;
+      const p = anyVal?.path || anyVal?.file?.path || anyVal?.note?.path;
+      if (typeof p === 'string' && idSet.has(p)) return p;
+      return undefined;
+    }
+    if (typeof val === 'string') {
+      let s = val.trim();
+      // Wikilink [[target]] or [[target|alias]]
+      const m = s.match(/^\[\[([^|\]]+)(?:\|[^\]]+)?\]\]$/);
+      if (m) {
+        const key = m[1].trim();
+        if (idSet.has(key)) return key;
+        const byName = nameToId.get(key) || nameToId.get(key.replace(/\.md$/i, ''));
+        if (byName) return byName;
+        return undefined;
+      }
+      // Direct path or name
+      if (idSet.has(s)) return s;
+      const byName2 = nameToId.get(s) || nameToId.get(s.replace(/\.md$/i, ''));
+      if (byName2) return byName2;
+    }
+    return undefined;
+  };
 
   for (const it of items ?? []) {
-    const idSource = getVal(it, fm.id) ?? (it as Record<string, unknown>)['id'] ?? (it as Record<string, unknown>)['path'];
-    const id = String(idSource ?? cryptoRandomId());
-    const textSource = getVal(it, fm.text) ?? (it as Record<string, unknown>)['title'] ?? (it as Record<string, unknown>)['name'];
-    const text = String(textSource ?? id);
+    // Required fields: id, text, start, end (by mapping keys). No implicit fallbacks to user property names.
+    const idSource = getVal(it, fm.id);
+    if (idSource == null || (typeof idSource === 'string' && idSource.trim().length === 0)) {
+      warnings.push('Skipping item: missing required id value for mapped key');
+      continue; // do not map without an id
+    }
+    const id = String(idSource);
+
+    const textSource = getVal(it, fm.text);
+    if (textSource == null || (typeof textSource === 'string' && textSource.trim().length === 0)) {
+      warnings.push(`Skipping item ${id}: missing required text value for mapped key`);
+      continue; // do not map without text
+    }
+    const text = String(textSource);
 
     const startRaw = getVal(it, fm.start);
     const endRaw = getVal(it, fm.end);
 
-    let startDate = parseDate(startRaw);
-    let endDate = parseDate(endRaw);
+    let startDate = parseInputToUTCDate(startRaw);
+    let endDate = parseInputToUTCDate(endRaw);
 
     // Missing date behaviors
     if (!endDate && startDate && config.missingEndBehavior === 'infer') {
-      endDate = addDays(startDate, config.defaultDuration);
+      endDate = addDaysUTC(startDate, config.defaultDuration);
     }
     if (!startDate && endDate && config.missingStartBehavior === 'infer') {
-      startDate = addDays(endDate, -config.defaultDuration);
+      startDate = addDaysUTC(endDate, -config.defaultDuration);
     }
 
+    // Handle case where both dates are missing
     if (!startDate && !endDate) {
-      if (config.showMissingDates) {
+      if (config.missingStartBehavior === 'infer' || config.missingEndBehavior === 'infer') {
+        // Infer both dates starting from today
+        const today = new Date();
+        startDate = today;
+        endDate = addDaysUTC(today, config.defaultDuration);
+
+      } else if (config.showMissingDates) {
         warnings.push(`Task ${id} missing both start and end`);
       }
     }
@@ -93,22 +167,27 @@ export function mapItemsToGantt(items: Array<Record<string, unknown>>, config: G
       progress = Math.max(0, Math.min(1, progress));
     }
 
-    // Parent mapping
+    // Parent mapping - resolve to a valid id in this dataset, otherwise leave undefined
     let parent: string | undefined = undefined;
     const parentVal = getVal(it, fm.parent);
     const parentsVal = getVal(it, fm.parents);
-    if (typeof parentVal === 'string' && parentVal.trim()) {
-      parent = parentVal;
-    } else if (Array.isArray(parentsVal) && parentsVal.length > 0) {
-      const first = (parentsVal as unknown[])[0];
-      if (typeof first === 'string' && (first as string).trim()) parent = first as string;
+
+    // Prefer explicit parent; otherwise first from parents list
+    let candidate: string | undefined = resolveParent(parentVal);
+    if (!candidate && Array.isArray(parentsVal) && parentsVal.length > 0) {
+      candidate = resolveParent((parentsVal as unknown[])[0]);
+    }
+
+    // Only assign if it points to an existing id and is not self
+    if (candidate && candidate !== id && idSet.has(candidate)) {
+      parent = candidate;
     }
 
     const task: GanttTask = {
       id,
       text,
-      start_date: startDate ? dateToIso(startDate) : undefined,
-      end_date: endDate ? dateToIso(endDate) : undefined,
+      start_date: startDate ? formatDateUTCToYMD(startDate) : undefined,
+      end_date: endDate ? formatDateUTCToYMD(endDate) : undefined,
       progress,
       parent,
       open: true,
