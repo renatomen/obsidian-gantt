@@ -36,6 +36,7 @@
     "eslint": "^9.36.0",
     "husky": "^9.1.7",
     "jest": "^30.1.3",
+    "jest-environment-jsdom": "^30.1.2",
     "obsidian-typings": "^4.51.0",
     "prettier": "^3.6.2",
     "ts-jest": "^29.4.4",
