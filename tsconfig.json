@@ -14,6 +14,14 @@
     "resolveJsonModule": true,
     "sourceMap": true,
     "outDir": "dist",
+    "baseUrl": "src",
+    "paths": {
+      "@utils/*": ["utils/*"],
+      "@mapping/*": ["mapping/*"],
+      "@gantt/*": ["gantt/*"],
+      "@bases/*": ["bases/*"],
+      "@config/*": ["config/*"]
+    },
     "types": [
       /* Add when installed: "obsidian-typings" */
     ]

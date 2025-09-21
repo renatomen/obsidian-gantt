@@ -1,5 +1,5 @@
 import type { Plugin, WorkspaceLeaf } from 'obsidian';
-import { buildGanttViewFactory } from './views/gantt-view';
+import { buildGanttViewFactory } from '@bases/views/gantt-view';
 
 /** Key used to register our custom view inside Bases */
 export const GANTT_VIEW_KEY = 'obsidianGantt';

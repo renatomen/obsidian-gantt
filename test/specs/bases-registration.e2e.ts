@@ -31,7 +31,7 @@ describe('Bases registration', () => {
         return { ids, regs, hasBases: Boolean(bases) };
       });
       // Print diagnostics to WDIO logs for troubleshooting
-      // eslint-disable-next-line no-console
+
       console.log('[bases-reg diag]', JSON.stringify(diag));
     }
 
