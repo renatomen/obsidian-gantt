@@ -1,8 +1,10 @@
-import type { Plugin } from 'obsidian';
+import type { Plugin, TFile } from 'obsidian';
 import type { BasesContainerLike } from '../types';
 import { loadLocalDhtmlx } from '../../gantt/dhtmlx-adapter';
 import { GanttService, type GanttLike } from '../../gantt/gantt-service';
 import { mapItemsToGantt, type GanttConfig } from '../../mapping/mapping-service';
+import { resolveColumnLayoutFromBases } from '../../gantt/columns/column-config-resolver';
+
 
 type BasesDataItem = {
   key: unknown;
@@ -20,6 +22,8 @@ export function buildGanttViewFactory(plugin: Plugin) {
   return function createView(basesContainer: BasesContainerLike) {
     let rootEl: HTMLElement | null = null;
     let ephemeral: { scrollTop?: number } = {};
+    let basesChangeHandler: (() => void) | null = null;
+
     let ganttService: GanttService | null = null;
 
     const asRecord = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === 'object') ? v as Record<string, unknown> : undefined;
@@ -63,11 +67,134 @@ export function buildGanttViewFactory(plugin: Plugin) {
 
     const safeJson = (obj: unknown): string => {
       try {
-        return JSON.stringify(obj, (_k, v) => (typeof v === 'function' ? `[Function:${(v as Function).name||'anon'}]` : v), 2)?.slice(0, 4000) ?? '';
+        return JSON.stringify(
+          obj,
+          (_k, v) => (typeof v === 'function' ? `[Function:${(v as { name?: string }).name || 'anon'}]` : v),
+          2
+        )?.slice(0, 4000) ?? '';
       } catch {
         return String(obj);
       }
     };
+
+    // Persist column sizes into Bases YAML using standard `columnSize`
+    const persistColumnSizes = async (sizes: Record<string, number>) => {
+      type LooseObj = Record<string, unknown>;
+      const get = <T = unknown>(obj: unknown, key: string): T | undefined => (obj && typeof obj === 'object') ? (obj as LooseObj)[key] as T : undefined;
+      const call = (target: unknown, fnName: string, ...args: unknown[]): unknown => {
+        const t = target as LooseObj | undefined;
+        const fn = t?.[fnName] as ((...a: unknown[]) => unknown) | undefined;
+        if (typeof fn === 'function') {
+          try { return fn.apply(target as unknown, args); } catch { /* noop */ }
+        }
+        return undefined;
+      };
+
+      try {
+        const controller = get<LooseObj>(basesContainer, 'controller');
+        const query = get<LooseObj>(basesContainer, 'query');
+        let wrote = false;
+
+        // 1) Preferred: internal Bases APIs if available
+        const trySetViewConfig = (t?: LooseObj): boolean => {
+          if (!t) return false;
+          if (call(t, 'setViewConfig', 'columnSize', sizes) !== undefined) return true;
+          if (call(t, 'setViewConfig', { columnSize: sizes }) !== undefined) return true;
+          return false;
+        };
+        wrote = trySetViewConfig(controller) || trySetViewConfig(query);
+
+        // 2) When embedded: query.saveFn with updated views
+        if (!wrote && query && typeof get(query, 'saveFn') === 'function') {
+          const currentViewName = get<string>(basesContainer, 'viewName');
+          const viewsSrc = Array.isArray(get<unknown[]>(query, 'views')) ? (get<unknown[]>(query, 'views') as LooseObj[]) : [];
+          const views = viewsSrc.slice();
+          let idx = views.findIndex(v => {
+            const t = (v?.type ?? (v as LooseObj)['viewType']) as string | undefined;
+            const name = v?.name as string | undefined;
+            return (t === 'obsidianGantt' || t === 'obsidian-gantt') && (!currentViewName || name === currentViewName);
+          });
+          if (idx === -1) idx = views.findIndex(v => (v?.type === 'obsidianGantt' || v?.type === 'obsidian-gantt'));
+          if (idx === -1) {
+            views.push({ type: 'obsidian-gantt', name: currentViewName, columnSize: { ...sizes }, data: { columnSize: { ...sizes } } });
+          } else {
+            const v = { ...(views[idx] as LooseObj) };
+            v.columnSize = { ...sizes };
+            const data = (v.data && typeof v.data === 'object') ? (v.data as LooseObj) : {};
+            v.data = { ...data, columnSize: { ...sizes } };
+            views[idx] = v;
+          }
+          try {
+            console.debug('obsidian-gantt: attempting query.saveFn with updated views');
+            await (get<(payload: LooseObj) => Promise<unknown>>(query, 'saveFn') as (payload: LooseObj) => Promise<unknown>)({ ...(query as LooseObj), views });
+            wrote = true;
+          } catch (err) {
+            console.debug('obsidian-gantt: query.saveFn failed', err);
+          }
+        }
+
+        // 3) Fallback: write directly to the Base file frontmatter
+        if (!wrote) {
+          const app = plugin.app;
+          const pathOf = (o: unknown, path: string): string | undefined => {
+            const parts = path.split('.');
+            let cur: unknown = o;
+            for (const p of parts) {
+              if (!cur || typeof cur !== 'object') return undefined;
+              cur = (cur as LooseObj)[p];
+            }
+            return typeof cur === 'string' ? cur : undefined;
+          };
+          const candidates: Array<string | undefined> = [
+            pathOf(basesContainer, 'controller.file.path'),
+            pathOf(basesContainer, 'query.file.path'),
+            (() => { try { const f = app.workspace.getActiveFile?.(); return f?.path; } catch { return undefined; } })(),
+          ];
+
+          for (const p of candidates) {
+            if (!p) continue;
+            const abs = app.vault.getAbstractFileByPath(p);
+            if (abs && 'stat' in abs) {
+              try {
+                await app.fileManager.processFrontMatter(abs as TFile, (fm: LooseObj) => {
+                  const currentViewName = get<string>(basesContainer, 'viewName');
+                  const arr = Array.isArray(fm.views) ? (fm.views as LooseObj[]) : [];
+                  let idx = arr.findIndex(v => {
+                    const t = (v?.type ?? (v as LooseObj)['viewType']) as string | undefined;
+                    const name = v?.name as string | undefined;
+                    return (t === 'obsidianGantt' || t === 'obsidian-gantt') && (!currentViewName || name === currentViewName);
+                  });
+                  if (idx === -1) idx = arr.findIndex(v => (v?.type === 'obsidianGantt' || v?.type === 'obsidian-gantt'));
+                  if (idx === -1) {
+                    arr.push({ type: 'obsidian-gantt', name: currentViewName, columnSize: { ...sizes }, data: { columnSize: { ...sizes } } });
+                  } else {
+                    const v = { ...(arr[idx] as LooseObj) };
+                    v.columnSize = { ...sizes };
+                    const data = (v.data && typeof v.data === 'object') ? (v.data as LooseObj) : {};
+                    v.data = { ...data, columnSize: { ...sizes } };
+                    arr[idx] = v;
+                  }
+                  fm.views = arr;
+                });
+                wrote = true;
+                break;
+              } catch {
+                // try next candidate
+              }
+            }
+          }
+        }
+
+        if (wrote) {
+          try { call(controller, 'runQuery'); } catch { /* optional refresh */ }
+        } else {
+          console.debug('obsidian-gantt: no supported API to persist columnSize; write skipped');
+        }
+      } catch (e) {
+        console.warn('obsidian-gantt: failed to persist columnSize', e);
+      }
+    };
+
 
     const getObsGanttConfig = (): { ok: true; cfg: GanttConfig } | { ok: false; reason: string; missing?: string[] } => {
       // Try multiple surfaces observed in Bases implementations
@@ -109,14 +236,15 @@ export function buildGanttViewFactory(plugin: Plugin) {
       try { console.debug('obsidian-gantt: query.views[selected] raw', safeJson(selectedView)); } catch { /* intentionally empty */ }
       try { console.debug('obsidian-gantt: selectedView.data keys', selectedView?.data ? Object.keys(selectedView.data) : null); } catch { /* intentionally empty */ }
 
-      const og: Record<string, unknown> =
+      const og = (
         selectedView?.obsidianGantt
         ?? selectedView?.data?.obsidianGantt
         ?? (selectedView?.data && selectedView?.data.fieldMappings ? selectedView.data : undefined)
         ?? ogFromQuery
         ?? ogFromControllerKey
-        ?? (ogFromControllerObj as Record<string, unknown> | undefined)?.['obsidianGantt']
-        ?? ({} as Record<string, unknown>);
+        ?? ogFromControllerObj?.['obsidianGantt']
+        ?? {}
+      ) as Record<string, unknown>;
       console.debug('obsidian-gantt: debug resolved obsidianGantt', safeJson(og));
 
       const fm = og['fieldMappings'] as Record<string, string> | undefined;
@@ -135,6 +263,7 @@ export function buildGanttViewFactory(plugin: Plugin) {
         viewMode: (og['viewMode'] as 'Day'|'Week'|'Month') ?? 'Day',
         show_today_marker: Boolean((og['show_today_marker'] as unknown) ?? false),
         hide_task_names: Boolean((og['hide_task_names'] as unknown) ?? false),
+
         showMissingDates: Boolean((og['showMissingDates'] as unknown) ?? true),
         missingStartBehavior: (og['missingStartBehavior'] as 'infer'|'show'|'hide') ?? 'infer',
         missingEndBehavior: (og['missingEndBehavior'] as 'infer'|'show'|'hide') ?? 'infer',
@@ -145,6 +274,35 @@ export function buildGanttViewFactory(plugin: Plugin) {
       console.debug('obsidian-gantt: debug finalized cfg', safeJson(cfg));
       return { ok: true, cfg };
     };
+
+    // Extract optional table width from obsidianGantt.tableWidth in the selected Bases view
+    const getTableWidthFromBases = (): number | undefined => {
+      try {
+        const bc = basesContainer as unknown as Record<string, unknown>;
+        const q = asRecord(bc['query']);
+        const c = asRecord(bc['controller']);
+        const views = Array.isArray(q?.views) ? (q?.views as unknown as Array<Record<string, unknown>>) : undefined;
+        const viewName = typeof bc['viewName'] === 'string' ? (bc['viewName'] as string) : undefined;
+        let selected: Record<string, unknown> | undefined;
+        if (views?.length) {
+          selected = views.find(v => ((v.type === 'obsidianGantt' || v.type === 'obsidian-gantt') && (!viewName || v.name === viewName)))
+                  || views.find(v => (v.type === 'obsidianGantt' || v.type === 'obsidian-gantt'))
+                  || views.find(v => (v.viewType === 'obsidianGantt' || v.viewType === 'obsidian-gantt'));
+        }
+        const og = (
+          (selected?.['obsidianGantt'] as Record<string, unknown> | undefined)
+          ?? (asRecord(selected?.['data'])?.['obsidianGantt'] as Record<string, unknown> | undefined)
+          ?? (q && typeof q['getViewConfig'] === 'function' ? (q['getViewConfig'] as (k: string) => unknown)('obsidianGantt') as Record<string, unknown> : undefined)
+          ?? (c && typeof c['getViewConfig'] === 'function' ? (c['getViewConfig'] as (k?: string) => unknown)('obsidianGantt') as Record<string, unknown> : undefined)
+          ?? (asRecord((c?.['getViewConfig'] as ((...a: unknown[]) => unknown) | undefined)?.())?.['obsidianGantt'] as Record<string, unknown> | undefined)
+          ?? {} as Record<string, unknown>
+        );
+        const tw = (og['tableWidth'] as unknown) ?? (selected?.['tableWidth'] as unknown) ?? (asRecord(selected?.['data'])?.['tableWidth'] as unknown);
+        const n = Number(tw);
+        return Number.isFinite(n) && n > 0 ? Math.floor(n) : undefined;
+      } catch { return undefined; }
+    };
+
 
     // Render Gantt with real data
     const renderGantt = async () => {
@@ -200,6 +358,28 @@ export function buildGanttViewFactory(plugin: Plugin) {
           console.warn('obsidian-gantt: mapping warnings:', warnings);
         }
 
+        // Build id -> props map for property column templates
+        const getByPath = (obj: unknown, path: string): unknown => {
+          if (!obj || !path) return undefined;
+          const parts = path.split('.');
+          let cur: unknown = obj;
+          for (const p of parts) {
+            if (cur == null || typeof cur !== 'object') return undefined;
+            cur = (cur as Record<string, unknown>)[p];
+          }
+          return cur;
+        };
+        const idToProps = new Map<string | number, Record<string, unknown>>();
+        const idPath = config.fieldMappings.id as string;
+        for (const it of items) {
+          const idVal = getByPath(it, idPath) as string | number | undefined;
+          if (idVal != null) idToProps.set(idVal, it as Record<string, unknown>);
+        }
+
+        // Resolve column layout from Bases current configuration
+        const columnLayout = resolveColumnLayoutFromBases(basesContainer);
+
+
         // Initialize GanttService if needed
         if (!ganttService) {
           const ganttGlobal = (window as unknown as { gantt?: unknown }).gantt;
@@ -209,8 +389,9 @@ export function buildGanttViewFactory(plugin: Plugin) {
           ganttService = new GanttService(ganttGlobal as GanttLike);
         }
 
-        // Render the Gantt
-        ganttService.render(rootEl, tasks, links);
+        // Render the Gantt with column layout and props map
+        const tableWidth = getTableWidthFromBases();
+        ganttService.render(rootEl, tasks, links, { columns: columnLayout, idToProps, onColumnSizesChanged: persistColumnSizes, gridWidth: tableWidth });
 
         console.log(`obsidian-gantt: rendered ${tasks.length} tasks, ${links.length} links`);
       } catch (error) {
@@ -235,6 +416,13 @@ export function buildGanttViewFactory(plugin: Plugin) {
           await loadLocalDhtmlx(plugin);
         } catch (e) {
           console.warn('obsidian-gantt: failed to load local DHTMLX assets', e);
+        // Subscribe to Bases property/config changes for real-time updates
+        const qRec = asRecord((basesContainer as unknown as Record<string, unknown>)['query']);
+        if (qRec && typeof qRec['on'] === 'function' && !basesChangeHandler) {
+          basesChangeHandler = () => { void renderGantt(); };
+          try { (qRec['on'] as (ev: string, cb: () => void) => unknown)('change', basesChangeHandler); } catch { /* noop */ }
+        }
+
         }
         const host: HTMLElement = (basesContainer?.viewContainerEl ?? basesContainer?.containerEl ?? document.body) as HTMLElement;
         // Reuse existing root if present to avoid multiple appends
@@ -289,6 +477,15 @@ export function buildGanttViewFactory(plugin: Plugin) {
           } else {
             // Fallback clear
             rootEl.textContent = '';
+        // Unsubscribe from Bases changes
+        try {
+          const qRec = asRecord((basesContainer as unknown as Record<string, unknown>)['query']);
+          if (basesChangeHandler && typeof qRec?.['off'] === 'function') {
+            (qRec['off'] as (ev: string, cb: () => void) => unknown)('change', basesChangeHandler);
+          }
+        } catch { /* noop */ }
+        basesChangeHandler = null;
+
           }
           rootEl.remove();
           rootEl = null;
