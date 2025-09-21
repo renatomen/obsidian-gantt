@@ -1,5 +1,6 @@
 import esbuild from 'esbuild';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 const isWatch = process.argv.includes('--watch');
 
@@ -13,7 +14,14 @@ const options = {
   platform: 'browser',
   sourcemap: true,
   target: ['es2018'],
-  external: ['obsidian', 'electron', 'fs', 'path', 'os']
+  external: ['obsidian', 'electron', 'fs', 'path', 'os'],
+  alias: {
+    '@utils': path.resolve('src/utils'),
+    '@mapping': path.resolve('src/mapping'),
+    '@gantt': path.resolve('src/gantt'),
+    '@bases': path.resolve('src/bases'),
+    '@config': path.resolve('src/config')
+  }
 };
 
 if (isWatch) {
