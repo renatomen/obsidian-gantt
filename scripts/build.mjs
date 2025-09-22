@@ -13,6 +13,8 @@ const options = {
   platform: 'browser',
   sourcemap: true,
   target: ['es2018'],
+  jsx: 'automatic',
+  loader: { '.ts': 'ts', '.tsx': 'tsx', '.css': 'text' },
   external: ['obsidian', 'electron', 'fs', 'path', 'os']
 };
 
