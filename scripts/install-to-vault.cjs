@@ -23,33 +23,6 @@ const pluginDir = path.join(vaultPath, '.obsidian', 'plugins', pluginId);
         console.warn(`[install] Missing ${src}, skipped`);
       }
     }
-    // Copy vendor directory recursively if present
-    const srcVendor = path.join('dist', 'vendor');
-    const destVendor = path.join(pluginDir, 'vendor');
-    if (fs.existsSync(srcVendor)) {
-      if (fs.existsSync(destVendor)) {
-        await fsp.rm(destVendor, { recursive: true, force: true });
-      }
-      if (typeof fsp.cp === 'function') {
-        await fsp.cp(srcVendor, destVendor, { recursive: true });
-      } else {
-        // Fallback copy
-        const copyDir = async (src, dest) => {
-          await fsp.mkdir(dest, { recursive: true });
-          for (const entry of await fsp.readdir(src, { withFileTypes: true })) {
-            const s = path.join(src, entry.name);
-            const d = path.join(dest, entry.name);
-            if (entry.isDirectory()) await copyDir(s, d);
-            else await fsp.copyFile(s, d);
-          }
-        };
-        await copyDir(srcVendor, destVendor);
-      }
-      console.log(`[install] Copied vendor assets -> ${destVendor}`);
-    } else {
-      console.log('[install] No dist/vendor found; skipping vendor copy');
-    }
-
 
     // Ensure data.json exists; do not overwrite if present
     const dataPath = path.join(pluginDir, 'data.json');
