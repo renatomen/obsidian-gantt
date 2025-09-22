@@ -5,7 +5,7 @@ import tsPlugin from '@typescript-eslint/eslint-plugin';
 export default [
   // Files/folders to ignore
   {
-    ignores: ['dist/**', 'vendor/**', 'node_modules/**', 'coverage/**', '.wdio-*']
+    ignores: ['dist/**', 'vendor/**', 'node_modules/**', 'coverage/**', '.wdio-*', 'project/**']
   },
   // Base JS recommended rules
   js.configs.recommended,
