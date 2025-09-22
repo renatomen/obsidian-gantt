@@ -79,6 +79,7 @@ function installHandle(
     height: '100%',
     cursor: 'col-resize',
     zIndex: '2',
+    touchAction: 'none',
   } as CSSStyleDeclaration);
   headCell.appendChild(handle);
 
@@ -86,6 +87,7 @@ function installHandle(
   let startW = 0;
   let raf = 0;
   let liveW = 0;
+  let activePointerId: number | null = null;
 
   const onMouseMove = (e: MouseEvent) => {
     const dx = e.clientX - startX;
@@ -99,18 +101,20 @@ function installHandle(
     e.preventDefault();
   };
 
-  const onMouseUp = (_e: MouseEvent) => {
-    document.removeEventListener('mousemove', onMouseMove, true);
-    document.removeEventListener('mouseup', onMouseUp, true);
-    if (raf) cancelAnimationFrame(raf);
-
-    // Commit: update config.columns and re-render
+  const commitResize = () => {
     const cols = columnsRef() ?? [];
     for (const c of cols) {
       if (c && c.name === colName) c.width = Math.round(liveW || startW);
     }
     try { gantt.render?.(); } catch { /* optional */ }
     try { onCommit(extractSizes(cols)); } catch { /* noop */ }
+  };
+
+  const onMouseUp = (_e: MouseEvent) => {
+    document.removeEventListener('mousemove', onMouseMove, true);
+    document.removeEventListener('mouseup', onMouseUp, true);
+    if (raf) cancelAnimationFrame(raf);
+    commitResize();
   };
 
   const onMouseDown = (e: MouseEvent) => {
@@ -125,10 +129,62 @@ function installHandle(
     e.stopPropagation();
   };
 
+  // Pointer Events (touch/pen/mouse unified)
+  const onPointerMove = (e: PointerEvent) => {
+    if (activePointerId != null) {
+      const pid = (e as unknown as { pointerId?: number }).pointerId;
+      if (typeof pid === 'number' && pid !== activePointerId) return;
+    }
+    const dx = e.clientX - startX;
+    liveW = Math.max(minWidth, startW + dx);
+    if (!raf) {
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        headCell.style.width = px(liveW);
+      });
+    }
+    e.preventDefault();
+  };
+
+  const onPointerUp = (e: PointerEvent) => {
+    if (activePointerId != null) {
+      const pid = (e as unknown as { pointerId?: number }).pointerId;
+      if (typeof pid === 'number' && pid !== activePointerId) return;
+    }
+    try {
+      const pid = (e as unknown as { pointerId?: number }).pointerId as number | undefined;
+      if (typeof pid === 'number') (handle as unknown as { releasePointerCapture?: (id: number) => void }).releasePointerCapture?.(pid);
+    } catch { /* noop */ }
+    handle.removeEventListener('pointermove', onPointerMove, true);
+    handle.removeEventListener('pointerup', onPointerUp, true);
+    if (raf) cancelAnimationFrame(raf);
+    commitResize();
+    activePointerId = null;
+  };
+
+  const onPointerDown = (e: PointerEvent) => {
+    if (e.isPrimary === false) return; // ignore non-primary pointers
+    const rect = headCell.getBoundingClientRect();
+    startW = rect.width;
+    startX = e.clientX;
+    liveW = startW;
+    const pid = (e as unknown as { pointerId?: number }).pointerId as number | undefined;
+    activePointerId = typeof pid === 'number' ? pid : 1; // tolerant for environments without pointerId
+    try { if (typeof pid === 'number') (handle as unknown as { setPointerCapture?: (id: number) => void }).setPointerCapture?.(pid); } catch { /* noop */ }
+    handle.addEventListener('pointermove', onPointerMove, true);
+    handle.addEventListener('pointerup', onPointerUp, true);
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
   handle.addEventListener('mousedown', onMouseDown);
+  handle.addEventListener('pointerdown', onPointerDown);
 
   return () => {
     handle.removeEventListener('mousedown', onMouseDown);
+    handle.removeEventListener('pointerdown', onPointerDown);
+    handle.removeEventListener('pointermove', onPointerMove, true);
+    handle.removeEventListener('pointerup', onPointerUp, true);
     handle.remove();
   };
 }
