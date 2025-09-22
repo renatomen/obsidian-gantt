@@ -19,12 +19,13 @@ export default [
   js.configs.recommended,
   // TypeScript files
   {
-    files: ['**/*.ts'],
+    files: ['**/*.{ts,tsx}'],
     languageOptions: {
       parser: tsParser,
       parserOptions: {
         ecmaVersion: 2022,
-        sourceType: 'module'
+        sourceType: 'module',
+        ecmaFeatures: { jsx: true }
       },
       globals: {
         console: 'readonly',

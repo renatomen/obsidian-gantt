@@ -13,6 +13,7 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "sourceMap": true,
+    "jsx": "react-jsx",
     "outDir": "dist",
     "types": [
       /* Add when installed: "obsidian-typings" */
