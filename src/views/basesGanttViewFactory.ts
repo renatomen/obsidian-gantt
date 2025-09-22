@@ -1,17 +1,18 @@
 import type { Plugin } from 'obsidian';
 import type { BasesContainerLike, BasesViewLike } from './registerBasesGantt';
 import React from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import { GanttMvp } from '../ui/GanttMvp';
+import { mountReact } from '../ui/mountReact';
+import { ErrorBoundary } from '../ui/ErrorBoundary';
+import { GanttContainer } from '../components/GanttContainer';
 
-// MVP: mount React + SVAR Gantt with dummy data
+// MVP: mount React + SVAR Gantt with dummy data, with error boundary and clean unmount
 export function buildBasesGanttViewFactory(_plugin: Plugin): (container: BasesContainerLike) => BasesViewLike {
   return (container: BasesContainerLike): BasesViewLike => {
     let hostEl: HTMLElement | null = null;
-    let reactRoot: Root | null = null;
+    let unmount: (() => void) | null = null;
     let ephemeral: { scrollTop?: number } = {};
 
-    function mountReact() {
+    function mount() {
       if (!container.viewContainerEl) return;
       // Clear container
       container.viewContainerEl.empty?.();
@@ -23,9 +24,9 @@ export function buildBasesGanttViewFactory(_plugin: Plugin): (container: BasesCo
       if (!hostEl.isConnected) container.viewContainerEl.appendChild(hostEl);
       // Restore scroll if present
       if (typeof ephemeral.scrollTop === 'number') hostEl.scrollTop = ephemeral.scrollTop;
-      // Mount React root
-      reactRoot = createRoot(hostEl);
-      reactRoot.render(React.createElement(GanttMvp));
+      // Mount React subtree
+      if (unmount) { try { unmount(); } catch {} }
+      unmount = mountReact(hostEl, React.createElement(ErrorBoundary, null, React.createElement(GanttContainer)));
     }
 
     return {
@@ -34,26 +35,26 @@ export function buildBasesGanttViewFactory(_plugin: Plugin): (container: BasesCo
           // If Bases exposes controller, compute formulas before first paint
           await container.controller?.runQuery?.();
         } catch {}
-        mountReact();
+        mount();
       },
       async unload() {
-        // remove listeners if any
+        // remove listeners if any later
       },
       async destroy() {
-        try { reactRoot?.unmount(); } catch {}
+        try { unmount?.(); } catch {}
         if (hostEl?.parentElement) hostEl.parentElement.removeChild(hostEl);
-        reactRoot = null;
+        unmount = null;
         hostEl = null;
       },
       async refresh() {
-        mountReact();
+        mount();
       },
       onResize() {
         // For real Gantt, remeasure / rerender if needed
       },
       onDataUpdated() {
         // For real Gantt, apply selective updates; MVP re-renders
-        mountReact();
+        mount();
       },
       getEphemeralState() {
         if (!hostEl) return ephemeral;

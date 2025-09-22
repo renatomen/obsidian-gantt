@@ -10,10 +10,8 @@ function ensureCssInjected(id = 'wx-react-gantt-css') {
   document.head.appendChild(style);
 }
 
-export const GanttMvp: React.FC = () => {
-  useEffect(() => {
-    ensureCssInjected();
-  }, []);
+export const GanttContainer: React.FC = () => {
+  useEffect(() => { ensureCssInjected(); }, []);
 
   const tasks = [
     { id: 10, text: 'Summary', start: new Date(2025, 0, 1), end: new Date(2025, 0, 8), duration: 7, progress: 0, type: 'summary' as const },
@@ -35,5 +33,5 @@ export const GanttMvp: React.FC = () => {
   );
 };
 
-export default GanttMvp;
+export default GanttContainer;
 
