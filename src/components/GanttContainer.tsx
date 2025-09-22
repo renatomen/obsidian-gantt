@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { Gantt, Willow } from 'wx-react-gantt';
 import ganttCss from 'wx-react-gantt/dist/gantt.css';
+import type { SVARTask, SVARLink } from '../data-sources/DataSourceAdapter';
 
 function ensureCssInjected(id = 'wx-react-gantt-css') {
   if (document.getElementById(id)) return;
@@ -10,25 +11,27 @@ function ensureCssInjected(id = 'wx-react-gantt-css') {
   document.head.appendChild(style);
 }
 
-export const GanttContainer: React.FC = () => {
+export type GanttContainerProps = {
+  tasks: SVARTask[];
+  links?: SVARLink[];
+  scales?: Array<{ unit: 'day'|'week'|'month'; step: number; format: string }>;
+};
+
+export const GanttContainer: React.FC<GanttContainerProps> = ({ tasks, links = [], scales }) => {
   useEffect(() => { ensureCssInjected(); }, []);
 
-  const tasks = [
-    { id: 10, text: 'Summary', start: new Date(2025, 0, 1), end: new Date(2025, 0, 8), duration: 7, progress: 0, type: 'summary' as const },
-    { id: 1, text: 'Sample Task', start: new Date(2025, 0, 1), end: new Date(2025, 0, 5), duration: 4, progress: 0.5, type: 'task' as const, parent: 10 },
-    { id: 2, text: 'Another Task', start: new Date(2025, 0, 3), end: new Date(2025, 0, 8), duration: 5, progress: 0.2, type: 'task' as const, parent: 10 }
-  ];
-
-  const links = [{ id: 1, source: 1, target: 2, type: 'e2e' as const }];
-
-  const scales = [
+  const effectiveScales = scales ?? [
     { unit: 'month' as const, step: 1, format: 'MMMM yyy' },
     { unit: 'day' as const, step: 1, format: 'd' }
   ];
 
+  if (!tasks || tasks.length === 0) {
+    return <div className="ogantt-empty">No items match.</div>;
+  }
+
   return (
     <Willow>
-      <Gantt tasks={tasks} links={links} scales={scales} />
+      <Gantt tasks={tasks} links={links} scales={effectiveScales} />
     </Willow>
   );
 };
