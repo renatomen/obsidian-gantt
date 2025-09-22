@@ -72,7 +72,7 @@ export async function registerBasesGantt(plugin: Plugin, factory: (container: Ba
 
   // Register view
   bases.registrations![REGISTRATION_KEY] = {
-    name: 'Gantt (obsidian-gantt)',
+    name: 'Gantt (OG)',
     icon: 'calendar-gantt',
     factory,
   };
