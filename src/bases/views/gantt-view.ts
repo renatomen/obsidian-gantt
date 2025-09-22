@@ -1,9 +1,14 @@
 import type { Plugin, TFile } from 'obsidian';
+import { parseYaml, stringifyYaml } from 'obsidian';
 import type { BasesContainerLike } from '../types';
 import { loadLocalDhtmlx } from '../../gantt/dhtmlx-adapter';
 import { GanttService, type GanttLike } from '../../gantt/gantt-service';
 import { mapItemsToGantt, type GanttConfig } from '../../mapping/mapping-service';
 import { resolveColumnLayoutFromBases } from '../../gantt/columns/column-config-resolver';
+import { BasesSettingsUpdater } from '../index';
+import type { YAMLCodec } from '../settings/parser/yaml';
+import { findBaseFence } from '../settings/parser/fenceLocator';
+
 
 
 type BasesDataItem = {
@@ -16,6 +21,10 @@ type BasesDataItem = {
 };
 type BasesViewLike = { type?: string; name?: string; data?: Record<string, unknown>; obsidianGantt?: unknown };
 
+
+  // Shared across instances created from this factory: track per-instance identity and per-file fence usage
+  const instanceRegistry = new Map<string, { file: TFile; fenceIndex?: number; viewIndex?: number; isBaseFile: boolean }>();
+  const fileFenceState = new Map<string, { usedFenceIndices: Set<number> }>();
 
 /** Factory to create the Bases custom Gantt view (obsidian-gantt). */
 export function buildGanttViewFactory(plugin: Plugin) {
@@ -98,44 +107,56 @@ export function buildGanttViewFactory(plugin: Plugin) {
         // 1) Preferred: internal Bases APIs if available
         const trySetViewConfig = (t?: LooseObj): boolean => {
           if (!t) return false;
-          if (call(t, 'setViewConfig', 'columnSize', sizes) !== undefined) return true;
-          if (call(t, 'setViewConfig', { columnSize: sizes }) !== undefined) return true;
+          const fn = (t as LooseObj)['setViewConfig'] as ((...a: unknown[]) => unknown) | undefined;
+          if (typeof fn === 'function') {
+            try { fn.call(t as unknown, 'columnSize', sizes); return true; } catch { /* try alt shape */ }
+            try { fn.call(t as unknown, { columnSize: sizes }); return true; } catch { /* noop */ }
+          }
           return false;
         };
         wrote = trySetViewConfig(controller) || trySetViewConfig(query);
 
-        // 2) When embedded: query.saveFn with updated views
-        if (!wrote && query && typeof get(query, 'saveFn') === 'function') {
-          const currentViewName = get<string>(basesContainer, 'viewName');
-          const viewsSrc = Array.isArray(get<unknown[]>(query, 'views')) ? (get<unknown[]>(query, 'views') as LooseObj[]) : [];
-          const views = viewsSrc.slice();
-          let idx = views.findIndex(v => {
-            const t = (v?.type ?? (v as LooseObj)['viewType']) as string | undefined;
-            const name = v?.name as string | undefined;
-            return (t === 'obsidianGantt' || t === 'obsidian-gantt') && (!currentViewName || name === currentViewName);
-          });
-          if (idx === -1) idx = views.findIndex(v => (v?.type === 'obsidianGantt' || v?.type === 'obsidian-gantt'));
-          if (idx === -1) {
-            views.push({ type: 'obsidian-gantt', name: currentViewName, columnSize: { ...sizes }, data: { columnSize: { ...sizes } } });
-          } else {
-            const v = { ...(views[idx] as LooseObj) };
-            v.columnSize = { ...sizes };
-            const data = (v.data && typeof v.data === 'object') ? (v.data as LooseObj) : {};
-            v.data = { ...data, columnSize: { ...sizes } };
-            views[idx] = v;
-          }
-          try {
-            console.debug('obsidian-gantt: attempting query.saveFn with updated views');
-            await (get<(payload: LooseObj) => Promise<unknown>>(query, 'saveFn') as (payload: LooseObj) => Promise<unknown>)({ ...(query as LooseObj), views });
-            wrote = true;
-          } catch (err) {
-            console.debug('obsidian-gantt: query.saveFn failed', err);
-          }
-        }
-
-        // 3) Fallback: write directly to the Base file frontmatter
+        // 2) Use BasesSettingsUpdater utilities to write to .base files or code blocks
         if (!wrote) {
-          const app = plugin.app;
+
+
+	          const app = plugin.app;
+	          // Build YAML codec using Obsidian's YAML helpers (static import for runtime compatibility)
+	          const yamlCodec: YAMLCodec = { parse: <T>(t: string) => parseYaml(t) as T, stringify: (o: unknown) => stringifyYaml(o) };
+	          const updater = new BasesSettingsUpdater(app.vault, yamlCodec);
+
+	          // Prefer per-instance mapping derived from DOM id to avoid YAML ids entirely
+	          const instanceId = rootEl?.dataset?.oganttInstanceId;
+	          const reg = instanceId ? instanceRegistry.get(instanceId) : undefined;
+	          if (reg) {
+	            try {
+	              if (reg.isBaseFile) {
+	                await updater.updateBaseFile({ file: reg.file, view: reg.viewIndex, columnSize: sizes });
+	              } else {
+	                await updater.updateBaseCodeBlock({ file: reg.file, fence: reg.fenceIndex ?? 0, view: reg.viewIndex, columnSize: sizes });
+	              }
+	              wrote = true;
+	            } catch (e) {
+	              console.debug('obsidian-gantt: instance-mapped write failed, will fall back', e);
+	            }
+	          }
+
+	          // Secondary fallback: mapping stored on the Bases container (per-view instance)
+	          if (!wrote) {
+	            try {
+	              const m = (basesContainer as unknown as { __oganttMapping?: { file: TFile; fenceIndex?: number; viewIndex?: number; isBaseFile: boolean } }).__oganttMapping;
+	              if (m) {
+	                if (m.isBaseFile) {
+	                  await updater.updateBaseFile({ file: m.file, view: m.viewIndex, columnSize: sizes });
+	                } else {
+	                  await updater.updateBaseCodeBlock({ file: m.file, fence: m.fenceIndex ?? 0, view: m.viewIndex, columnSize: sizes });
+	                }
+	                wrote = true;
+	              }
+	            } catch { /* noop */ }
+	          }
+
+
           const pathOf = (o: unknown, path: string): string | undefined => {
             const parts = path.split('.');
             let cur: unknown = o;
@@ -145,41 +166,53 @@ export function buildGanttViewFactory(plugin: Plugin) {
             }
             return typeof cur === 'string' ? cur : undefined;
           };
-          const candidates: Array<string | undefined> = [
-            pathOf(basesContainer, 'controller.file.path'),
-            pathOf(basesContainer, 'query.file.path'),
-            (() => { try { const f = app.workspace.getActiveFile?.(); return f?.path; } catch { return undefined; } })(),
-          ];
 
-          for (const p of candidates) {
-            if (!p) continue;
-            const abs = app.vault.getAbstractFileByPath(p);
+          const filePath =
+            pathOf(basesContainer, 'controller.file.path')
+            || pathOf(basesContainer, 'query.file.path')
+            || (() => { try { const f = app.workspace.getActiveFile?.(); return f?.path; } catch { return undefined; } })();
+
+          if (filePath) {
+            const abs = app.vault.getAbstractFileByPath(filePath);
             if (abs && 'stat' in abs) {
-              try {
-                await app.fileManager.processFrontMatter(abs as TFile, (fm: LooseObj) => {
-                  const currentViewName = get<string>(basesContainer, 'viewName');
-                  const arr = Array.isArray(fm.views) ? (fm.views as LooseObj[]) : [];
-                  let idx = arr.findIndex(v => {
-                    const t = (v?.type ?? (v as LooseObj)['viewType']) as string | undefined;
-                    const name = v?.name as string | undefined;
-                    return (t === 'obsidianGantt' || t === 'obsidian-gantt') && (!currentViewName || name === currentViewName);
-                  });
-                  if (idx === -1) idx = arr.findIndex(v => (v?.type === 'obsidianGantt' || v?.type === 'obsidian-gantt'));
-                  if (idx === -1) {
-                    arr.push({ type: 'obsidian-gantt', name: currentViewName, columnSize: { ...sizes }, data: { columnSize: { ...sizes } } });
-                  } else {
-                    const v = { ...(arr[idx] as LooseObj) };
-                    v.columnSize = { ...sizes };
-                    const data = (v.data && typeof v.data === 'object') ? (v.data as LooseObj) : {};
-                    v.data = { ...data, columnSize: { ...sizes } };
-                    arr[idx] = v;
-                  }
-                  fm.views = arr;
+              const file = abs as TFile;
+              const isBaseFile = file.path.toLowerCase().endsWith('.base');
+
+              // Determine view selector robustly (prefer concrete index over name)
+              const qObj = get<LooseObj>(basesContainer, 'query');
+              const viewsArr = Array.isArray(qObj?.['views']) ? (qObj!['views'] as unknown as LooseObj[]) : [];
+              const currentViewName = get<string>(basesContainer, 'viewName');
+              let viewSel: string | number | undefined = undefined;
+              if (viewsArr.length) {
+                let idx = viewsArr.findIndex(v => {
+                  const t = (v?.['type'] ?? v?.['viewType']) as string | undefined;
+                  const name = v?.['name'] as string | undefined;
+                  return (t === 'obsidianGantt' || t === 'obsidian-gantt') && (!currentViewName || name === currentViewName);
                 });
-                wrote = true;
-                break;
-              } catch {
-                // try next candidate
+                if (idx === -1) idx = viewsArr.findIndex(v => ((v?.['type'] ?? v?.['viewType']) === 'obsidianGantt' || (v?.['type'] ?? v?.['viewType']) === 'obsidian-gantt'));
+                if (idx >= 0) viewSel = idx; else viewSel = undefined;
+              }
+
+              try {
+                if (isBaseFile) {
+                  await updater.updateBaseFile({ file, view: viewSel, columnSize: sizes });
+                  wrote = true;
+                } else {
+                  // Try code block update with id if available; do NOT write or assume ids
+                  const getViewConfig = qObj && typeof qObj['getViewConfig'] === 'function' ? (qObj['getViewConfig'] as (k?: string) => unknown) : undefined;
+                  const fenceId = (() => {
+                    try { return (getViewConfig ? (getViewConfig.call(qObj as unknown, 'id') as string | undefined) : undefined) || (qObj?.['id'] as string | undefined); } catch { return undefined; }
+                  })();
+
+                  if (typeof fenceId === 'string' && fenceId.trim()) {
+                    await updater.updateBaseCodeBlock({ file, fence: { id: fenceId }, view: viewSel, columnSize: sizes });
+                    wrote = true;
+                  } else {
+                    console.debug('obsidian-gantt: skip persisting columnSize for code block without id (no DOM mapping)');
+                  }
+                }
+              } catch (err) {
+                console.debug('obsidian-gantt: BasesSettingsUpdater write failed', err);
               }
             }
           }
@@ -416,6 +449,7 @@ export function buildGanttViewFactory(plugin: Plugin) {
           await loadLocalDhtmlx(plugin);
         } catch (e) {
           console.warn('obsidian-gantt: failed to load local DHTMLX assets', e);
+        }
         // Subscribe to Bases property/config changes for real-time updates
         const qRec = asRecord((basesContainer as unknown as Record<string, unknown>)['query']);
         if (qRec && typeof qRec['on'] === 'function' && !basesChangeHandler) {
@@ -423,14 +457,12 @@ export function buildGanttViewFactory(plugin: Plugin) {
           try { (qRec['on'] as (ev: string, cb: () => void) => unknown)('change', basesChangeHandler); } catch { /* noop */ }
         }
 
-        }
         const host: HTMLElement = (basesContainer?.viewContainerEl ?? basesContainer?.containerEl ?? document.body) as HTMLElement;
-        // Reuse existing root if present to avoid multiple appends
-        let existing = host.querySelector('.ogantt-root') as HTMLElement | null;
-        if (rootEl && rootEl.isConnected) {
-          existing = rootEl;
-        }
-        if (!existing) {
+        // Create or reuse a per-view root element stored on the basesContainer (avoid cross-view sharing)
+        const bcWithRoot = basesContainer as unknown as { __oganttRootEl?: HTMLElement };
+        if (bcWithRoot.__oganttRootEl && bcWithRoot.__oganttRootEl.isConnected) {
+          rootEl = bcWithRoot.__oganttRootEl;
+        } else {
           const hostWithCreateDiv = host as unknown as { createDiv?: (opts: { cls?: string }) => HTMLElement };
           if (typeof hostWithCreateDiv.createDiv === 'function') {
             rootEl = hostWithCreateDiv.createDiv({ cls: 'ogantt-root' });
@@ -439,9 +471,79 @@ export function buildGanttViewFactory(plugin: Plugin) {
             div.className = 'ogantt-root';
             rootEl = host.appendChild(div);
           }
-        } else {
-          rootEl = existing;
+          bcWithRoot.__oganttRootEl = rootEl;
         }
+        // Assign a unique per-instance id on the root container and register mapping
+        if (rootEl) {
+          const iid = `og-` + (typeof crypto !== 'undefined' && 'randomUUID' in crypto ? (crypto as unknown as { randomUUID: () => string }).randomUUID() : Math.random().toString(36).slice(2, 10));
+          rootEl.dataset.oganttInstanceId = iid;
+
+          // Resolve file and selectors for persistence without writing YAML ids
+          const pathOf = (o: unknown, path: string): string | undefined => {
+            const parts = path.split('.');
+            let cur: unknown = o;
+            for (const p of parts) {
+              if (!cur || typeof cur !== 'object') return undefined;
+              cur = (cur as Record<string, unknown>)[p];
+            }
+            return typeof cur === 'string' ? cur : undefined;
+          };
+
+          const app = plugin.app;
+          const filePath = pathOf(basesContainer, 'controller.file.path')
+            || pathOf(basesContainer, 'query.file.path')
+            || (() => { try { const f = app.workspace.getActiveFile?.(); return f?.path; } catch { return undefined; } })();
+
+          if (filePath) {
+            const abs = app.vault.getAbstractFileByPath(filePath);
+            if (abs && 'stat' in abs) {
+              const file = abs as TFile;
+              const isBaseFile = file.path.toLowerCase().endsWith('.base');
+
+              // Determine view index against query.views
+              const qObj = (basesContainer as unknown as Record<string, unknown>)['query'] as Record<string, unknown> | undefined;
+              const viewsArr = Array.isArray(qObj?.['views']) ? (qObj!['views'] as unknown as Array<Record<string, unknown>>) : [];
+              const currentViewName = (basesContainer as unknown as Record<string, unknown>)['viewName'] as string | undefined;
+              let viewIndex: number | undefined = undefined;
+              if (viewsArr.length) {
+                let idx = viewsArr.findIndex(v => {
+                  const t = (v?.['type'] ?? v?.['viewType']) as string | undefined;
+                  const name = v?.['name'] as string | undefined;
+                  return (t === 'obsidianGantt' || t === 'obsidian-gantt') && (!currentViewName || name === currentViewName);
+                });
+                if (idx === -1) idx = viewsArr.findIndex(v => ((v?.['type'] ?? v?.['viewType']) === 'obsidianGantt' || (v?.['type'] ?? v?.['viewType']) === 'obsidian-gantt'));
+                if (idx >= 0) viewIndex = idx;
+              }
+
+              let fenceIndex: number | undefined = undefined;
+              if (!isBaseFile) {
+                const state = fileFenceState.get(file.path) ?? { usedFenceIndices: new Set<number>() };
+                fileFenceState.set(file.path, state);
+                try {
+                  const content = await app.vault.read(file);
+                  const candidateIndices: number[] = [];
+                  for (let i = 0; ; i++) {
+                    const f = findBaseFence(content, i);
+                    if (!f) break;
+                    candidateIndices.push(i);
+                  }
+                  fenceIndex = candidateIndices.find(i => !state.usedFenceIndices.has(i));
+                  if (typeof fenceIndex !== 'number') fenceIndex = 0;
+                  state.usedFenceIndices.add(fenceIndex);
+                } catch { /* ignore - best effort */ }
+              }
+
+              const mapping = { file, isBaseFile, fenceIndex, viewIndex } as { file: TFile; fenceIndex?: number; viewIndex?: number; isBaseFile: boolean };
+              instanceRegistry.set(iid, mapping);
+              // Store mapping on the Bases container too, so we can recover even if registry entry is lost
+              try { (basesContainer as unknown as { __oganttMapping?: typeof mapping }).__oganttMapping = mapping; } catch { /* noop */ }
+            }
+          }
+
+          // Trigger a post-mount paint to avoid blank containers
+          requestAnimationFrame(() => { rootEl && (rootEl.style.opacity = '1'); });
+        }
+
         // Fix height to prevent layout growth and allow internal scroll
         if (rootEl) {
           rootEl.style.height = '60vh';
@@ -487,6 +589,21 @@ export function buildGanttViewFactory(plugin: Plugin) {
         basesChangeHandler = null;
 
           }
+          // Cleanup instance registry and release fence index if used
+          {
+            const iid = rootEl.dataset?.oganttInstanceId;
+            if (iid) {
+              const reg = instanceRegistry.get(iid);
+              if (reg && !reg.isBaseFile && typeof reg.fenceIndex === 'number') {
+                const st = fileFenceState.get(reg.file.path);
+                st?.usedFenceIndices.delete(reg.fenceIndex);
+              }
+              instanceRegistry.delete(iid);
+            }
+            try { (basesContainer as unknown as { __oganttRootEl?: HTMLElement; __oganttMapping?: unknown }).__oganttRootEl = undefined; } catch { /* noop */ }
+            try { (basesContainer as unknown as { __oganttRootEl?: HTMLElement; __oganttMapping?: unknown }).__oganttMapping = undefined; } catch { /* noop */ }
+          }
+
           rootEl.remove();
           rootEl = null;
         }
