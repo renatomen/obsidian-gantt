@@ -3,13 +3,15 @@ import type { FieldMappings } from '../mapping/FieldMappings';
 // Minimal internal SVAR task/link shapes used by our components
 export interface SVARTask {
   id: string | number;
+  noteId?: string | number; // original Obsidian note id to preserve across virtual duplicates
   text: string;
   start?: Date;
   end?: Date;
   duration?: number;
   progress?: number;
   parent?: string | number;
-  type?: 'task' | 'summary' | 'milestone';
+  type?: 'task' | 'summary';
+  [key: string]: unknown;
 }
 
 export interface SVARLink {
@@ -25,6 +27,12 @@ export interface GanttConfig {
   tableWidth?: number;
   show_today_marker?: boolean;
   hide_task_names?: boolean;
+  // Phase 2 optional behaviors
+  showMissingDates?: boolean;
+  missingStartBehavior?: 'infer' | 'show' | 'hide';
+  missingEndBehavior?: 'show' | 'infer' | 'hide';
+  defaultDuration?: number;
+  showMissingDateIndicators?: boolean;
 }
 
 // Phase 2 stub: Data source adapter interface
