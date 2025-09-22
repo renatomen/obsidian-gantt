@@ -2,7 +2,7 @@
   "name": "obsidian-gantt",
   "version": "0.0.1",
   "private": true,
-  "description": "Generate DHTMLX Gantt charts from Obsidian note properties and YAML frontmatter metadata.",
+  "description": "React-based Gantt charts (SVAR React Gantt) for Obsidian with Bases/Dataview integration.",
   "author": "Renato / Open Source Community",
   "license": "MIT",
   "type": "module",
