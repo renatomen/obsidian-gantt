@@ -65,7 +65,7 @@ export function registerBasesGantt(plugin: Plugin): () => void {
         const mountEl = root.createDiv({ cls: 'og-bases-gantt-root' });
         mountEl.style.height = '100%';
         mountEl.style.width = '100%';
-        let component: any = null;
+        let component: unknown = null;
 
         return {
           load() {

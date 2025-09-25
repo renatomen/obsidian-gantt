@@ -2,13 +2,25 @@
   import { Gantt, Willow } from '@svar-ui/svelte-gantt';
   import { Toolbar } from '@svar-ui/svelte-toolbar';
 
+  // Type definitions for Gantt API (simplified to avoid strict typing issues)
+  interface GanttTask {
+    id: string;
+    text: string;
+    start: string;
+    end: string;
+    progress: number;
+  }
+
+  // Use any for SVAR API to avoid complex type definitions
+  type GanttAPI = any;
+
   // Note: SVAR Gantt may generate console warnings:
   // - Non-passive event listeners for touch/wheel (required for drag functionality)
   // - Performance violations during chart rendering (expected for complex UI)
   // CSP violations for external fonts are prevented by fonts={false} and custom icon implementation
 
-  let api: any = $state();
-  let editingTask: any = $state(null);
+  let api: GanttAPI = $state();
+  let editingTask: GanttTask | null = $state(null);
   let showEditor = $state(false);
 
   // Custom toolbar items using Obsidian-style actions
@@ -47,13 +59,13 @@
   ];
 
   // Initialize API and intercept editor events
-  function initGantt(ganttApi: any) {
+  function initGantt(ganttApi: GanttAPI) {
     api = ganttApi;
 
     // Intercept the show-editor event to use our custom editor
     api.intercept("show-editor", ({ id }: { id: string }) => {
       if (id) {
-        editingTask = api.getState().tasks.byId(id);
+        editingTask = api?.getState().tasks.byId(id);
         showEditor = true;
       }
       return false; // Prevent default editor
@@ -61,7 +73,7 @@
   }
 
   // Handle custom editor actions
-  function handleEditorAction(action: string, data: any) {
+  function handleEditorAction(action: string, data: GanttTask | null) {
     switch (action) {
       case "close-editor":
         showEditor = false;
