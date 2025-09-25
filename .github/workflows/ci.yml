@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint --if-present
+      - name: Typecheck
+        run: npm run typecheck --if-present
+      - name: Unit tests
+        run: npm test --if-present
+      - name: Build
+        run: npm run build
+
+  e2e:
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Prepare temp vault path
+        shell: pwsh
+        run: |
+          $vault = "$Env:RUNNER_TEMP\\vault"
+          echo "OBSIDIAN_TEST_VAULT=$vault" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+          New-Item -ItemType Directory -Force -Path $vault | Out-Null
+      - name: Build plugin
+        run: npm run build
+      - name: Install plugin into temp vault
+        run: node scripts/install-to-vault.cjs
+      - name: Run E2E tests (WDIO)
+        run: npm run e2e
+      - name: Upload E2E artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            .wdio-*
+            test-results
+            **/wdio-*.log
