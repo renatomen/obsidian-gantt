@@ -1,4 +1,6 @@
 import type { Plugin } from 'obsidian';
+import { mount, unmount } from 'svelte';
+import GanttContainer from './GanttContainer.svelte';
 
 // Structural typing to avoid coupling to Bases internals
 export interface BasesContainerLike {
@@ -60,17 +62,19 @@ export function registerBasesGantt(plugin: Plugin): () => void {
       icon: VIEW_ICON,
       factory: (container: BasesContainerLike): BasesViewLike => {
         const root = container.viewContainerEl;
+        const mountEl = root.createDiv({ cls: 'og-bases-gantt-root' });
+        mountEl.style.height = '100%';
+        mountEl.style.width = '100%';
         let component: any = null;
 
         return {
           load() {
             try { container.controller?.runQuery?.(); } catch {}
             try {
-              // Dynamically import to avoid hard coupling
-              // eslint-disable-next-line @typescript-eslint/no-var-requires
-              const Mod = require('./GanttContainer.svelte');
-              const GanttContainer = Mod?.default ?? Mod;
-              component = new GanttContainer({ target: root, props: {} });
+              // Use Svelte 5 mount API instead of legacy new Component()
+              // Note: SVAR Gantt may generate console warnings (touch events, performance)
+              // CSP violations are prevented by fonts={false} in GanttContainer
+              component = mount(GanttContainer, { target: mountEl, props: {} });
             } catch (e) {
               const fallback = root.createDiv({ cls: 'og-bases-gantt-fallback' });
               fallback.setText('Gantt (OG): failed to render chart. See console.');
@@ -84,7 +88,14 @@ export function registerBasesGantt(plugin: Plugin): () => void {
           setEphemeralState() {},
           unload() {},
           destroy() {
-            try { component?.$destroy?.(); } catch {}
+            try {
+              if (component) {
+                unmount(component);
+                component = null;
+              }
+            } catch {}
+            try { mountEl.detach?.(); } catch {}
+            try { mountEl.remove?.(); } catch {}
             try { while (root.firstChild) root.removeChild(root.firstChild); } catch {}
           },
         };
