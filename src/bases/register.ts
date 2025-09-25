@@ -59,23 +59,33 @@ export function registerBasesGantt(plugin: Plugin): () => void {
       name: VIEW_NAME,
       icon: VIEW_ICON,
       factory: (container: BasesContainerLike): BasesViewLike => {
-        // MVP: no chart render yet – just a placeholder and lifecycle no-ops
         const root = container.viewContainerEl;
-        const placeholder = root.createDiv({ cls: 'og-bases-gantt-placeholder' });
-        placeholder.setText('Gantt (OG) view registered. Rendering will be added in OG-23.');
+        let component: any = null;
 
         return {
           load() {
             try { container.controller?.runQuery?.(); } catch {}
+            try {
+              // Dynamically import to avoid hard coupling
+              // eslint-disable-next-line @typescript-eslint/no-var-requires
+              const Mod = require('./GanttContainer.svelte');
+              const GanttContainer = Mod?.default ?? Mod;
+              component = new GanttContainer({ target: root, props: {} });
+            } catch (e) {
+              const fallback = root.createDiv({ cls: 'og-bases-gantt-fallback' });
+              fallback.setText('Gantt (OG): failed to render chart. See console.');
+              console.warn('[Gantt] Failed to mount GanttContainer', e);
+            }
           },
           refresh() {},
-          onDataUpdated() {},
+          onDataUpdated() { /* For OG-23 dummy data remains static */ },
           onResize() {},
           getEphemeralState() { return {}; },
           setEphemeralState() {},
           unload() {},
           destroy() {
-            try { placeholder.remove(); } catch {}
+            try { component?.$destroy?.(); } catch {}
+            try { while (root.firstChild) root.removeChild(root.firstChild); } catch {}
           },
         };
       },
