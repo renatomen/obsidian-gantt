@@ -1,4 +1,6 @@
 import type { Plugin } from 'obsidian';
+import { mount, unmount } from 'svelte';
+import GanttContainer from './GanttContainer.svelte';
 
 // Structural typing to avoid coupling to Bases internals
 export interface BasesContainerLike {
@@ -59,23 +61,42 @@ export function registerBasesGantt(plugin: Plugin): () => void {
       name: VIEW_NAME,
       icon: VIEW_ICON,
       factory: (container: BasesContainerLike): BasesViewLike => {
-        // MVP: no chart render yet – just a placeholder and lifecycle no-ops
         const root = container.viewContainerEl;
-        const placeholder = root.createDiv({ cls: 'og-bases-gantt-placeholder' });
-        placeholder.setText('Gantt (OG) view registered. Rendering will be added in OG-23.');
+        const mountEl = root.createDiv({ cls: 'og-bases-gantt-root' });
+        mountEl.style.height = '100%';
+        mountEl.style.width = '100%';
+        let component: unknown = null;
 
         return {
           load() {
             try { container.controller?.runQuery?.(); } catch {}
+            try {
+              // Use Svelte 5 mount API instead of legacy new Component()
+              // Note: SVAR Gantt may generate console warnings (touch events, performance)
+              // CSP violations are prevented by fonts={false} in GanttContainer
+              component = mount(GanttContainer, { target: mountEl, props: {} });
+            } catch (e) {
+              const fallback = root.createDiv({ cls: 'og-bases-gantt-fallback' });
+              fallback.setText('Gantt (OG): failed to render chart. See console.');
+              console.warn('[Gantt] Failed to mount GanttContainer', e);
+            }
           },
           refresh() {},
-          onDataUpdated() {},
+          onDataUpdated() { /* For OG-23 dummy data remains static */ },
           onResize() {},
           getEphemeralState() { return {}; },
           setEphemeralState() {},
           unload() {},
           destroy() {
-            try { placeholder.remove(); } catch {}
+            try {
+              if (component) {
+                unmount(component);
+                component = null;
+              }
+            } catch {}
+            try { mountEl.detach?.(); } catch {}
+            try { mountEl.remove?.(); } catch {}
+            try { while (root.firstChild) root.removeChild(root.firstChild); } catch {}
           },
         };
       },
