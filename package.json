@@ -16,6 +16,8 @@
     "test": "jest --passWithNoTests",
     "test:bdd": "node scripts/run-bdd-tests.mjs",
     "test:bdd-validate": "node scripts/run-bdd-tests.mjs",
+    "validate:bdd": "node scripts/validate-bdd-syntax.mjs",
+    "generate:feature": "node scripts/generate-bdd-feature.mjs",
     "lint": "eslint . --ext .ts,.svelte",
     "typecheck": "svelte-check --tsconfig tsconfig.json",
     "format": "prettier --write .",
