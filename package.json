@@ -19,6 +19,7 @@
     "validate:bdd": "node scripts/validate-bdd-syntax.mjs",
     "generate:feature": "node scripts/generate-bdd-feature.mjs",
     "tags": "node scripts/semantic-tag-manager.mjs",
+    "detect:bdd-changes": "node scripts/detect-bdd-changes.mjs",
     "lint": "eslint . --ext .ts,.svelte",
     "typecheck": "svelte-check --tsconfig tsconfig.json",
     "format": "prettier --write .",
