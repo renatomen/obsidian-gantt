@@ -20,7 +20,8 @@
       "@/*": ["src/*"]
     },
     "types": [
-      "svelte"
+      "svelte",
+      "node"
     ]
   },
   "include": ["src", "**/*.svelte"],
