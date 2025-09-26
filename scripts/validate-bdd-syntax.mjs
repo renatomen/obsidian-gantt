@@ -6,8 +6,78 @@
  * Integrates with Husky pre-commit hooks
  */
 
-import { readFileSync, readdirSync, statSync } from 'fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'fs';
 import { join, extname } from 'path';
+import yaml from 'js-yaml';
+
+/**
+ * Load semantic tag registry for validation
+ */
+function loadSemanticTagRegistry() {
+  try {
+    const registryPath = '.bdd/semantic-tags.yaml';
+    if (!existsSync(registryPath)) {
+      return null; // Registry is optional
+    }
+    const content = readFileSync(registryPath, 'utf8');
+    return yaml.load(content);
+  } catch (error) {
+    console.warn(`⚠️  Error loading semantic tag registry: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Get all valid tags from registry
+ */
+function getValidTags(registry) {
+  if (!registry) return new Set();
+
+  const validTags = new Set();
+
+  // Add all tag categories
+  const categories = ['epics', 'features', 'priorities', 'test_types', 'platforms', 'components'];
+  categories.forEach(category => {
+    if (registry[category]) {
+      Object.keys(registry[category]).forEach(tag => validTags.add(tag));
+    }
+  });
+
+  return validTags;
+}
+
+/**
+ * Validate semantic tags in a feature file
+ */
+function validateSemanticTags(content, registry) {
+  const errors = [];
+  const warnings = [];
+
+  if (!registry) {
+    return { errors, warnings }; // Skip validation if no registry
+  }
+
+  const validTags = getValidTags(registry);
+  const lines = content.split('\n');
+
+  // Find all tags in the file
+  const foundTags = new Set();
+  lines.forEach((line, lineNum) => {
+    const tagMatches = line.match(/@[\w-]+/g);
+    if (tagMatches) {
+      tagMatches.forEach(tag => {
+        foundTags.add(tag);
+
+        // Check if tag is registered
+        if (!validTags.has(tag)) {
+          errors.push(`Line ${lineNum + 1}: Unregistered tag '${tag}'`);
+        }
+      });
+    }
+  });
+
+  return { errors, warnings };
+}
 
 /**
  * Find all .feature files in the features directory
@@ -130,38 +200,67 @@ function validateFeatureFile(filePath) {
  */
 function validateAllFeatureFiles() {
   console.log('🧪 OG-37: Validating BDD feature files...\n');
-  
+
   const featureFiles = findFeatureFiles();
-  
+  const registry = loadSemanticTagRegistry();
+
   if (featureFiles.length === 0) {
     console.log('📝 No feature files found to validate');
     return true;
   }
-  
+
   console.log(`📋 Found ${featureFiles.length} feature file(s) to validate:`);
   featureFiles.forEach(file => console.log(`   - ${file}`));
   console.log('');
-  
+
   let allValid = true;
   const allErrors = [];
-  
+  const allWarnings = [];
+
   for (const filePath of featureFiles) {
     const result = validateFeatureFile(filePath);
-    
-    if (result.valid) {
+
+    // Also validate semantic tags
+    const content = readFileSync(filePath, 'utf8');
+    const tagValidation = validateSemanticTags(content, registry);
+
+    const hasErrors = result.errors.length > 0 || tagValidation.errors.length > 0;
+
+    if (!hasErrors) {
       console.log(`✅ ${filePath} - Valid`);
     } else {
       console.log(`❌ ${filePath} - Invalid`);
+
+      // Show Gherkin errors
       result.errors.forEach(error => {
         console.log(`   └─ ${error}`);
         allErrors.push(error);
       });
+
+      // Show semantic tag errors
+      tagValidation.errors.forEach(error => {
+        console.log(`   └─ ${error}`);
+        allErrors.push(error);
+      });
+
       allValid = false;
     }
+
+    // Collect warnings
+    tagValidation.warnings.forEach(warning => {
+      allWarnings.push(`${filePath}: ${warning}`);
+    });
   }
   
   console.log('');
-  
+
+  // Show warnings if any
+  if (allWarnings.length > 0) {
+    console.log('⚠️  Warnings:');
+    allWarnings.forEach(warning => console.log(`   - ${warning}`));
+    console.log('');
+  }
+
   if (allValid) {
     console.log('🎉 All BDD feature files are valid!');
   } else {
@@ -177,6 +276,7 @@ function validateAllFeatureFiles() {
     console.log('   - Every scenario must have Given-When-Then steps');
     console.log('   - Use domain language, avoid technical implementation details');
     console.log('   - Keep scenarios independent and focused');
+    console.log('   - Use registered semantic tags from .bdd/semantic-tags.yaml');
   }
   
   return allValid;

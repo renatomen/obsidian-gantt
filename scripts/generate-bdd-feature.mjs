@@ -6,8 +6,9 @@
  * Usage: npm run generate:feature <domain> <feature-name>
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import yaml from 'js-yaml';
 
 // Project BDD conventions
 const DOMAINS = [
@@ -20,26 +21,75 @@ const DOMAINS = [
   'performance'
 ];
 
-const TAG_CATEGORIES = {
-  priority: ['@critical', '@high', '@medium', '@low'],
-  testType: ['@smoke', '@regression', '@integration'],
-  domain: ['@task-management', '@gantt-visualization', '@bases-integration', '@data-sources', '@user-experience'],
-  platform: ['@desktop', '@mobile', '@cross-platform'],
-  performance: ['@performance', '@load-test'],
-  accessibility: ['@accessibility', '@keyboard-nav']
-};
+/**
+ * Load semantic tag registry
+ */
+function loadSemanticTags() {
+  try {
+    const registryPath = '.bdd/semantic-tags.yaml';
+    if (!existsSync(registryPath)) {
+      console.warn('⚠️  Semantic tag registry not found, using defaults');
+      return null;
+    }
+    const content = readFileSync(registryPath, 'utf8');
+    return yaml.load(content);
+  } catch (error) {
+    console.warn(`⚠️  Error loading semantic tags: ${error.message}`);
+    return null;
+  }
+}
+
+/**
+ * Get suggested tags from registry
+ */
+function getSuggestedTags(domain, featureName, registry) {
+  if (!registry) {
+    // Fallback to default tags
+    return [`@${domain}`, '@priority-medium', '@regression'];
+  }
+
+  const suggestions = [];
+  // const context = `${domain} ${featureName}`.toLowerCase();
+
+  // Suggest epic based on domain
+  const domainToEpic = {
+    'gantt-visualization': '@epic-gantt-visualization',
+    'task-management': '@epic-task-management',
+    'bases-integration': '@epic-bases-integration',
+    'data-sources': '@epic-data-sources',
+    'user-experience': '@epic-user-experience',
+    'infrastructure': '@epic-infrastructure',
+    'performance': '@epic-performance'
+  };
+
+  if (domainToEpic[domain]) {
+    suggestions.push(domainToEpic[domain]);
+  }
+
+  // Suggest feature tag based on feature name
+  const featureKey = `@feature-${featureName}`;
+  if (registry.features && registry.features[featureKey]) {
+    suggestions.push(featureKey);
+  }
+
+  // Default priority and test type
+  suggestions.push('@priority-medium', '@regression');
+
+  return suggestions;
+}
 
 /**
  * Generate feature file template
  */
 function generateFeatureTemplate(domain, featureName, options = {}) {
+  const registry = loadSemanticTags();
   const {
     userType = 'project manager',
     functionality = 'perform an action',
     businessValue = 'achieve a goal',
     includeBackground = true,
     includeScenarioOutline = false,
-    tags = ['@medium', '@regression']
+    tags = getSuggestedTags(domain, featureName, registry)
   } = options;
 
   const featureTitle = featureName
@@ -47,8 +97,7 @@ function generateFeatureTemplate(domain, featureName, options = {}) {
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 
-  const domainTag = `@${domain}`;
-  const allTags = [domainTag, ...tags].join(' ');
+  const allTags = tags.join(' ');
 
   let template = `Feature: ${featureTitle}
   As a ${userType}
@@ -203,16 +252,12 @@ function parseArgs() {
 }
 
 /**
- * Show available tags
+ * Show available tags from semantic registry
  */
 function showAvailableTags() {
-  console.log('\n📋 Available Tags by Category:\n');
-  
-  Object.entries(TAG_CATEGORIES).forEach(([category, tags]) => {
-    console.log(`${category.charAt(0).toUpperCase() + category.slice(1)}:`);
-    tags.forEach(tag => console.log(`  ${tag}`));
-    console.log('');
-  });
+  console.log('\n📋 Available Tags from Semantic Registry:\n');
+  console.log('Use "npm run tags list" to see all available semantic tags');
+  console.log('');
 }
 
 /**
@@ -257,7 +302,7 @@ function main() {
 }
 
 // Export for testing
-export { generateFeatureTemplate, createFeatureFile, DOMAINS, TAG_CATEGORIES };
+export { generateFeatureTemplate, createFeatureFile, DOMAINS, loadSemanticTags, getSuggestedTags };
 
 // Run if called directly
 if (import.meta.url.endsWith(process.argv[1]) || process.argv[1].endsWith('generate-bdd-feature.mjs')) {
