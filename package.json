@@ -20,6 +20,7 @@
     "generate:feature": "node scripts/generate-bdd-feature.mjs",
     "tags": "node scripts/semantic-tag-manager.mjs",
     "detect:bdd-changes": "node scripts/detect-bdd-changes.mjs",
+    "sync:assertthat": "node scripts/sync-assertthat.mjs",
     "lint": "eslint . --ext .ts,.svelte",
     "typecheck": "svelte-check --tsconfig tsconfig.json",
     "format": "prettier --write .",
@@ -59,6 +60,10 @@
     "webdriverio": "^9.19.2"
   },
   "dependencies": {
-    "@svar-ui/svelte-gantt": "^2.3.0"
+    "@svar-ui/svelte-gantt": "^2.3.0",
+    "@cucumber/gherkin": "^27.0.0",
+    "axios": "^1.6.0",
+    "inquirer": "^9.2.0",
+    "simple-git": "^3.20.0"
   }
 }
