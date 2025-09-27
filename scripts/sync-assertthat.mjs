@@ -8,6 +8,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { execSync } from 'child_process';
+import inquirer from 'inquirer';
 
 // Configuration
 const CONFIG = {
@@ -520,12 +521,331 @@ class GherkinValidator {
 }
 
 /**
+ * Conflict Resolver
+ * Handles conflict detection and resolution using Git's built-in functionality
+ */
+class ConflictResolver {
+  constructor(gitExecutor = execSync, fileSystem = fs) {
+    this.gitExecutor = gitExecutor;
+    this.fs = fileSystem;
+  }
+
+  /**
+   * Resolves conflicts for a list of changed files
+   */
+  async resolveConflicts(changes, stagingPath, featuresPath) {
+    const results = {
+      autoResolved: [],
+      requiresManual: [],
+      failed: []
+    };
+
+    console.log('\n🔧 Starting conflict resolution...');
+
+    // Process modifications (files that exist in both places but differ)
+    for (const filename of changes.modifications) {
+      try {
+        const resolution = await this.resolveFileConflict(filename, stagingPath, featuresPath);
+
+        if (resolution.autoResolved) {
+          results.autoResolved.push(filename);
+          console.log(`✅ Auto-resolved: ${filename} (${resolution.strategy})`);
+        } else {
+          results.requiresManual.push(filename);
+          console.log(`⚠️ Manual resolution required: ${filename}`);
+        }
+      } catch (error) {
+        results.failed.push({ filename, error: error.message });
+        console.error(`❌ Failed to resolve ${filename}: ${error.message}`);
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * Attempts to resolve conflicts for a single file using Git strategies
+   */
+  async resolveFileConflict(filename, stagingPath, featuresPath) {
+    const githubFile = path.join(featuresPath, filename);
+    const stagingFile = path.join(stagingPath, filename);
+    const tempFile = path.join(stagingPath, `${filename}.temp`);
+
+    // Try auto-resolution strategies in order of preference
+    const strategies = [
+      { name: 'ignore-space-change', flag: '--ignore-space-change' },
+      { name: 'ignore-all-space', flag: '--ignore-all-space' },
+      { name: 'ignore-blank-lines', flag: '--ignore-blank-lines' }
+    ];
+
+    for (const strategy of strategies) {
+      try {
+        // Use git merge-file for 3-way merge with strategy
+        const mergeResult = await this.attemptGitMerge(
+          stagingFile,
+          githubFile,
+          tempFile,
+          strategy.flag
+        );
+
+        if (mergeResult.success) {
+          // Copy resolved content back to staging file
+          await this.fs.copyFile(tempFile, stagingFile);
+          await this.fs.unlink(tempFile);
+
+          return { autoResolved: true, strategy: strategy.name };
+        }
+      } catch (error) {
+        // Strategy failed, try next one
+        continue;
+      }
+    }
+
+    // If auto-resolution failed, check if it's a simple conflict type
+    const conflictType = await this.analyzeConflictType(githubFile, stagingFile);
+
+    if (conflictType.isSimple) {
+      return { autoResolved: true, strategy: conflictType.reason };
+    }
+
+    // Complex conflict - requires manual resolution
+    return { autoResolved: false, conflictType };
+  }
+
+  /**
+   * Attempts Git merge using merge-file command
+   */
+  async attemptGitMerge(baseFile, theirFile, outputFile, strategy = '') {
+    try {
+      // Create a temporary "original" file for 3-way merge
+      // Since we don't have a true common ancestor, use the staging file as base
+      const originalFile = `${baseFile}.orig`;
+      await this.fs.copyFile(baseFile, originalFile);
+
+      const command = `git merge-file ${strategy} -p "${baseFile}" "${originalFile}" "${theirFile}"`;
+
+      const mergedContent = this.gitExecutor(command, {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe']
+      });
+
+      // Write merged content to output file
+      await this.fs.writeFile(outputFile, mergedContent);
+
+      // Clean up temporary file
+      await this.fs.unlink(originalFile);
+
+      // Check if merge was successful (no conflict markers)
+      const hasConflicts = await this.hasConflictMarkers(outputFile);
+
+      return { success: !hasConflicts, content: mergedContent };
+    } catch (error) {
+      // Git merge-file returns non-zero exit code for conflicts
+      // This is expected behavior, not necessarily an error
+      if (error.stdout) {
+        await this.fs.writeFile(outputFile, error.stdout);
+        const hasConflicts = await this.hasConflictMarkers(outputFile);
+        return { success: !hasConflicts, content: error.stdout };
+      }
+
+      throw new Error(`Git merge failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Checks if a file contains Git conflict markers
+   */
+  async hasConflictMarkers(filePath) {
+    try {
+      const content = await this.fs.readFile(filePath, 'utf8');
+      return content.includes('<<<<<<<') || content.includes('=======') || content.includes('>>>>>>>');
+    } catch (error) {
+      return true; // Assume conflicts if we can't read the file
+    }
+  }
+
+  /**
+   * Analyzes the type of conflict to determine if it's simple enough for auto-resolution
+   */
+  async analyzeConflictType(githubFile, stagingFile) {
+    try {
+      // Use git diff to analyze the differences
+      const diffCommand = `git diff --no-index --ignore-space-change "${stagingFile}" "${githubFile}"`;
+
+      try {
+        this.gitExecutor(diffCommand, { encoding: 'utf8' });
+        // No differences when ignoring space changes - it's a whitespace-only conflict
+        return { isSimple: true, reason: 'whitespace-only' };
+      } catch (error) {
+        // Files still differ, check for comment-only changes
+        if (await this.isCommentOnlyChange(error.stdout || '')) {
+          return { isSimple: true, reason: 'comments-only' };
+        }
+      }
+
+      return { isSimple: false, reason: 'content-changes' };
+    } catch (error) {
+      return { isSimple: false, reason: 'analysis-failed' };
+    }
+  }
+
+  /**
+   * Determines if changes are only in comments (Gherkin # comments)
+   */
+  async isCommentOnlyChange(diffOutput) {
+    if (!diffOutput) return false;
+
+    const lines = diffOutput.split('\n');
+    const changeLines = lines.filter(line => line.startsWith('+') || line.startsWith('-'));
+
+    // Remove diff markers and check if all changes are comments
+    const contentChanges = changeLines.filter(line => {
+      const content = line.substring(1).trim();
+      return content && !content.startsWith('#');
+    });
+
+    return contentChanges.length === 0;
+  }
+
+  /**
+   * Handles interactive resolution for complex conflicts
+   */
+  async promptUserResolution(filename, stagingPath, featuresPath) {
+    const githubFile = path.join(featuresPath, filename);
+    const stagingFile = path.join(stagingPath, filename);
+
+    console.log(`\n🔍 Manual resolution required for: ${filename}`);
+
+    // Show diff to help user understand the conflict
+    await this.showDetailedDiff(stagingFile, githubFile);
+
+    const choices = [
+      { name: 'Use GitHub version (newer)', value: 'github' },
+      { name: 'Use AssertThat version (current)', value: 'assertthat' },
+      { name: 'Create conflict markers for manual editing', value: 'markers' },
+      { name: 'Skip this file for now', value: 'skip' },
+      { name: 'Show diff again', value: 'diff' }
+    ];
+
+    let resolution;
+    do {
+      const answer = await inquirer.prompt([{
+        type: 'list',
+        name: 'choice',
+        message: `How would you like to resolve the conflict in ${filename}?`,
+        choices
+      }]);
+
+      resolution = answer.choice;
+
+      if (resolution === 'diff') {
+        await this.showDetailedDiff(stagingFile, githubFile);
+        resolution = null; // Continue the loop
+      }
+    } while (!resolution);
+
+    return await this.applyResolution(filename, resolution, stagingPath, featuresPath);
+  }
+
+  /**
+   * Shows detailed diff between two files
+   */
+  async showDetailedDiff(file1, file2) {
+    try {
+      console.log('\n📋 Detailed diff:');
+      console.log('─'.repeat(60));
+
+      const diffCommand = `git diff --no-index --color=never "${file1}" "${file2}"`;
+
+      try {
+        const diffOutput = this.gitExecutor(diffCommand, { encoding: 'utf8' });
+        console.log(diffOutput);
+      } catch (error) {
+        // git diff returns non-zero exit code when files differ
+        if (error.stdout) {
+          console.log(error.stdout);
+        } else {
+          console.log('Files are different but diff could not be generated');
+        }
+      }
+
+      console.log('─'.repeat(60));
+    } catch (error) {
+      console.error(`❌ Failed to show diff: ${error.message}`);
+    }
+  }
+
+  /**
+   * Applies the user's resolution choice
+   */
+  async applyResolution(filename, choice, stagingPath, featuresPath) {
+    const githubFile = path.join(featuresPath, filename);
+    const stagingFile = path.join(stagingPath, filename);
+
+    try {
+      switch (choice) {
+        case 'github':
+          await this.fs.copyFile(githubFile, stagingFile);
+          console.log(`✅ Applied GitHub version for ${filename}`);
+          return { resolved: true, method: 'github-version' };
+
+        case 'assertthat':
+          // Keep the current staging file (AssertThat version)
+          console.log(`✅ Kept AssertThat version for ${filename}`);
+          return { resolved: true, method: 'assertthat-version' };
+
+        case 'markers':
+          await this.createConflictMarkers(filename, stagingPath, featuresPath);
+          console.log(`✅ Created conflict markers in ${filename} for manual editing`);
+          return { resolved: true, method: 'conflict-markers' };
+
+        case 'skip':
+          console.log(`⏭️ Skipped ${filename} - will need resolution later`);
+          return { resolved: false, method: 'skipped' };
+
+        default:
+          throw new Error(`Unknown resolution choice: ${choice}`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to apply resolution for ${filename}: ${error.message}`);
+      return { resolved: false, method: 'failed', error: error.message };
+    }
+  }
+
+  /**
+   * Creates Git-style conflict markers in a file
+   */
+  async createConflictMarkers(filename, stagingPath, featuresPath) {
+    const githubFile = path.join(featuresPath, filename);
+    const stagingFile = path.join(stagingPath, filename);
+
+    try {
+      const githubContent = await this.fs.readFile(githubFile, 'utf8');
+      const stagingContent = await this.fs.readFile(stagingFile, 'utf8');
+
+      const conflictContent = [
+        '<<<<<<< GitHub (incoming changes)',
+        githubContent.trim(),
+        '=======',
+        stagingContent.trim(),
+        '>>>>>>> AssertThat (current version)'
+      ].join('\n');
+
+      await this.fs.writeFile(stagingFile, conflictContent);
+    } catch (error) {
+      throw new Error(`Failed to create conflict markers: ${error.message}`);
+    }
+  }
+}
+
+/**
  * Git Diff Manager
  * Handles git diff operations and change detection
  */
 class GitDiffManager {
-  constructor(stagingManager) {
+  constructor(stagingManager, conflictResolver = null) {
     this.stagingManager = stagingManager;
+    this.conflictResolver = conflictResolver || new ConflictResolver();
   }
 
   /**
@@ -628,21 +948,51 @@ class GitDiffManager {
   }
 
   /**
-   * Classifies changes as simple or complex
+   * Classifies changes as simple or complex using ConflictResolver
    */
   async classifyChanges(changes) {
     const classified = {
       simple: [],    // Auto-resolvable changes
-      complex: []    // Require manual resolution
+      complex: [],   // Require manual resolution
+      autoResolved: [] // Successfully auto-resolved
     };
 
-    // For now, treat all changes as complex requiring manual review
-    // TODO: Implement auto-resolution logic for whitespace, comments, etc.
-    classified.complex = [
-      ...changes.additions,
-      ...changes.modifications,
-      ...changes.deletions
-    ];
+    console.log('\n🔍 Classifying changes for conflict resolution...');
+
+    // Additions and deletions are generally straightforward
+    classified.simple.push(...changes.additions);
+    classified.simple.push(...changes.deletions);
+
+    // Use ConflictResolver to analyze modifications
+    if (changes.modifications.length > 0) {
+      try {
+        const resolutionResults = await this.conflictResolver.resolveConflicts(
+          changes,
+          this.stagingManager.stagingPath,
+          this.stagingManager.featuresPath
+        );
+
+        classified.autoResolved.push(...resolutionResults.autoResolved);
+        classified.complex.push(...resolutionResults.requiresManual);
+
+        // Log failed resolutions as complex
+        resolutionResults.failed.forEach(failure => {
+          classified.complex.push(failure.filename);
+          console.warn(`⚠️ Resolution failed for ${failure.filename}: ${failure.error}`);
+        });
+
+      } catch (error) {
+        console.error('❌ Error during conflict resolution:', error.message);
+        // Fallback: treat all modifications as complex
+        classified.complex.push(...changes.modifications);
+      }
+    }
+
+    // Summary
+    console.log(`📊 Classification results:`);
+    console.log(`  ✅ Simple: ${classified.simple.length} files`);
+    console.log(`  🔧 Auto-resolved: ${classified.autoResolved.length} files`);
+    console.log(`  ⚠️ Complex: ${classified.complex.length} files`);
 
     return classified;
   }
@@ -654,7 +1004,8 @@ class GitDiffManager {
 class SyncOrchestrator {
   constructor() {
     this.stagingManager = new StagingAreaManager();
-    this.diffManager = new GitDiffManager(this.stagingManager);
+    this.conflictResolver = new ConflictResolver();
+    this.diffManager = new GitDiffManager(this.stagingManager, this.conflictResolver);
     this.gherkinValidator = new GherkinValidator();
   }
 
@@ -818,20 +1169,26 @@ class SyncOrchestrator {
       // Validate feature files before proceeding
       await this.validateFeatureFiles(changes);
 
-      // Classify changes
+      // Classify changes and attempt auto-resolution
       const classified = await this.diffManager.classifyChanges(changes);
-      
-      if (classified.complex.length === 0) {
-        console.log('✅ No conflicts detected - sync can proceed automatically');
-        // TODO: Implement automatic sync
-      } else {
-        console.log('⚠️ Manual review required for the following files:');
-        classified.complex.forEach(file => console.log(`  - ${file}`));
-        
-        // Show diffs for complex changes
-        for (const file of classified.complex.slice(0, 3)) { // Limit to first 3 for demo
-          await this.diffManager.showDiff(file);
+
+      // Handle remaining complex conflicts interactively
+      if (classified.complex.length > 0) {
+        console.log('\n⚠️ Interactive resolution required for complex conflicts...');
+
+        const resolutionResults = await this.handleInteractiveResolution(classified.complex);
+
+        console.log('\n📊 Interactive resolution summary:');
+        console.log(`  ✅ Resolved: ${resolutionResults.resolved.length} files`);
+        console.log(`  ⏭️ Skipped: ${resolutionResults.skipped.length} files`);
+        console.log(`  ❌ Failed: ${resolutionResults.failed.length} files`);
+
+        if (resolutionResults.skipped.length > 0) {
+          console.log('\n⚠️ Skipped files will need manual resolution before next sync:');
+          resolutionResults.skipped.forEach(file => console.log(`  - ${file}`));
         }
+      } else {
+        console.log('✅ All conflicts resolved automatically - sync can proceed');
       }
       
       // Clean up staging area
@@ -852,6 +1209,43 @@ class SyncOrchestrator {
       process.exit(1);
     }
   }
+
+  /**
+   * Handles interactive resolution for complex conflicts
+   */
+  async handleInteractiveResolution(complexFiles) {
+    const results = {
+      resolved: [],
+      skipped: [],
+      failed: []
+    };
+
+    console.log(`\n🔧 Starting interactive resolution for ${complexFiles.length} files...`);
+
+    for (const filename of complexFiles) {
+      try {
+        console.log(`\n📁 Processing: ${filename} (${complexFiles.indexOf(filename) + 1}/${complexFiles.length})`);
+
+        const resolution = await this.conflictResolver.promptUserResolution(
+          filename,
+          this.stagingManager.stagingPath,
+          this.stagingManager.featuresPath
+        );
+
+        if (resolution.resolved) {
+          results.resolved.push(filename);
+        } else {
+          results.skipped.push(filename);
+        }
+
+      } catch (error) {
+        console.error(`❌ Failed to resolve ${filename}: ${error.message}`);
+        results.failed.push(filename);
+      }
+    }
+
+    return results;
+  }
 }
 
 // Main execution
@@ -870,4 +1264,4 @@ if (import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
   console.log('🔧 Debug: Script imported as module');
 }
 
-export { StagingAreaManager, GitDiffManager, SyncOrchestrator };
+export { StagingAreaManager, GitDiffManager, ConflictResolver, SyncOrchestrator };
